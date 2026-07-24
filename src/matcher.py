@@ -5,6 +5,7 @@ import hashlib
 from collections import Counter
 from pathlib import Path
 from pdf_reader import PDFReader
+from rapidfuzz import fuzz
 
 PAGES_CONFIG_PATH = Path("./src/pages.json")
 
@@ -22,9 +23,6 @@ STOPWORDS = {
     "an"
 }
 
-# Scan pages, store them, and compare them to previously scanned
-# pages in order to match prior page orders and detect
-# new pages/slides
 def match_pages(match_dir):
     for f in match_dir.iterdir():
         if f.is_file():
@@ -34,7 +32,13 @@ def match_pages(match_dir):
         
         doc = pymupdf.open(f)
         page = doc[0]
-        
+        fingerprint_page(page)
+        score_page(page, doc.name)
+
+# Scan pages, store them, and compare them to previously scanned
+# pages in order to match prior page orders and detect
+# new pages/slides
+def fingerprint_page(page):
         # get normalized and stabilized text
         text = page.get_text()
         normalized = normalize(text)
@@ -75,12 +79,33 @@ def match_pages(match_dir):
         
         # compare to pages.py
         
+def score_page(page, filename):
+    with open(PAGES_CONFIG_PATH) as pages_file:
+        pages = json.load(pages_file)
+    
+    highest_score = 0
+    matching_id = ""
+    
+    for old_page in pages:
+        old_text = pages[old_page]["clean_text"]
+        new_text = stabilize(normalize(page.get_text()))
+        
+        score = fuzz.token_set_ratio(
+            old_text,
+            new_text
+        )
+        if highest_score < score:
+            highest_score = score
+            matching_id = old_page
+    print(f"Highest Score for page {filename}: {highest_score, matching_id}")
+    
+    
 # Normalize text for parsing
 def normalize(text):
     text = text.lower()
     text = re.sub(r"\s+", " ", text)
     
-    print(f"Normalized text: {text}")
+    # print(f"Normalized text: {text}")
     return text.strip()
 
 # Strip misleading content
@@ -89,7 +114,7 @@ def stabilize(text):
     text = re.sub(r"\d+", "<number>", text) # remove numbers
     text = re.sub(r"\d{1,2}/\d{1,2}/\d{2,4}", "<date>", text) # remove dates
     
-    print(f"Stabilized text: {text}")
+    # print(f"Stabilized text: {text}")
     return text
 
 # Get most common keywords for indentification
@@ -107,7 +132,7 @@ def parse_keywords(text):
         in counts.most_common(20)
     ]
     
-    print(f"Keywords: {keywords}")
+    # print(f"Keywords: {keywords}")
     return keywords
 
 # Get headings for powerful bits
@@ -125,7 +150,7 @@ def parse_headings(page):
                 if span["size"] > 16:
                     headings.append(span["text"])
                   
-    print(f"Headings: {headings}")  
+    # print(f"Headings: {headings}")  
     return headings
 
 def parse_layout(page):
@@ -139,7 +164,7 @@ def parse_layout(page):
                 for span in line["spans"]:
                     spans.append(span["text"])
                     
-    print(f"Layout: {spans}")
+    # print(f"Layout: {spans}")
     return spans
 
 # def get_label_id(fingerprint):
