@@ -8,6 +8,8 @@ from pdf_reader import PDFReader
 from rapidfuzz import fuzz
 
 PAGES_CONFIG_PATH = Path("./src/pages.json")
+TEMPLATE_CONFIG_PATH = Path("./src/template.json")
+MINIMUM_MATCH_SCORE = 95
 
 STOPWORDS = {
     "the",
@@ -23,8 +25,11 @@ STOPWORDS = {
     "an"
 }
 
+# scan imported template pages, match to existing configs
 def match_pages(match_dir):
-    for f in match_dir.iterdir():
+    template_config = []
+    
+    for f in sorted(match_dir.iterdir(), key=lambda x: numeric_key(x.name)):
         if f.is_file():
             print(f"File {f.name}")
         else:
@@ -32,13 +37,41 @@ def match_pages(match_dir):
         
         doc = pymupdf.open(f)
         page = doc[0]
-        fingerprint_page(page)
-        score_page(page, doc.name)
+        id = fingerprint_page(page, doc.name)
+        # score, matching_id = score_page(page, doc.name)
+        
+        with open(PAGES_CONFIG_PATH) as pages_file:
+            pages = json.load(pages_file)
+            
+        if (pages[id].get("id") == "" or pages[id].get("label") == ""):
+            
+            # if (len(pages[id]["headings"]) > 0):
+            #     label = pages[id]["headings"][0]
+            # else:
+            print(f"Please label page {id} with headings: {pages[id]["headings"]}")
+            label = input()
+            id_from_label = normalize(label)
+            pages[id]["label"] = label
+            pages[id]["id"] = id_from_label
+            
+            # check whether to be replaced
+            print(f"Set file as placeholder? (Y/n)")
+            placeholder = input().lower()
+            placeholder = placeholder == 'y'
+            pages[id]["placeholder"] = placeholder
+            
+            with open(PAGES_CONFIG_PATH, "w") as pages_file:
+                json.dump(pages, pages_file)
+        
+        template_config.append({ "id": id, "label": pages[id]["label"], "placeholder": pages[id]["placeholder"] }) 
+    
+    with open(TEMPLATE_CONFIG_PATH, "w") as template:
+        json.dump(template_config, template)
 
 # Scan pages, store them, and compare them to previously scanned
 # pages in order to match prior page orders and detect
 # new pages/slides
-def fingerprint_page(page):
+def fingerprint_page(page, filename):
         # get normalized and stabilized text
         text = page.get_text()
         normalized = normalize(text)
@@ -53,32 +86,51 @@ def fingerprint_page(page):
         # get layout
         # layout = parse_layout(page)
         
-        # store   
+        # compare to see if new
+        score, matching_id = score_page(page, filename)
+        
         with open(PAGES_CONFIG_PATH) as pages_file:
-            pages = json.load(pages_file)
-            
-        fingerprint = {
-            "clean_text": stabilized,
-            "keywords": keywords,
-            "headings": headings,
-            # "layout": layout,
-            "page_width": page.rect.width,
-            "page_height": page.rect.height,
-        }
-        
-        # label, id = get_label_id(fingerprint)
-        
-        # print(f"Page label/id: {label}/{id}")
-        # fingerprint["id"] = id
+            pages = json.load(pages_file)      
         
         page_hash = hashlib.sha1(normalized.encode()).hexdigest()[:12]
-        pages[page_hash] = fingerprint
+        print(f"Page hash: {page_hash}, matching_id: {matching_id}, match? {page_hash == matching_id}")
+        
+        # if new, store as new 
+        if (score < MINIMUM_MATCH_SCORE and page_hash != matching_id):            
+            fingerprint = {
+                "id": "",
+                "label": "",
+                "clean_text": stabilized,
+                "keywords": keywords,
+                "headings": headings,
+                # "layout": layout,
+                "page_width": page.rect.width,
+                "page_height": page.rect.height,
+            }
+            
+            pages[page_hash] = fingerprint
+            # print(f"New fingerprint: {pages[page_hash]}")
+            
+            
+            
+            with open(PAGES_CONFIG_PATH, "w") as pages_file:
+                json.dump(pages, pages_file)
+            
+            return page_hash
+        else:
+            # print(f"Old fingerprint: {pages[matching_id]}")
+            pages[matching_id]["clean_text"] = stabilized
+            pages[matching_id]["keywords"] = keywords
+            pages[matching_id]["headings"] = headings
+            pages[matching_id]["page_width"] = page.rect.width
+            pages[matching_id]["page_height"] = page.rect.height
+            # print(f"Updated fingerprint: {pages[matching_id]}")
+            
+            with open(PAGES_CONFIG_PATH, "w") as pages_file:
+                json.dump(pages, pages_file)
+            return matching_id
                  
-        with open(PAGES_CONFIG_PATH, "w") as pages_file:
-            json.dump(pages, pages_file)
-        
-        # compare to pages.py
-        
+# score page against existing pages.json pages
 def score_page(page, filename):
     with open(PAGES_CONFIG_PATH) as pages_file:
         pages = json.load(pages_file)
@@ -88,16 +140,20 @@ def score_page(page, filename):
     
     for old_page in pages:
         old_text = pages[old_page]["clean_text"]
-        new_text = stabilize(normalize(page.get_text()))
+        new_text = stabilize(normalize(page.get_text())) 
         
-        score = fuzz.token_set_ratio(
+        score = fuzz.token_sort_ratio(
             old_text,
             new_text
         )
         if highest_score < score:
             highest_score = score
             matching_id = old_page
+    # print(f"old text: {pages[matching_id]["clean_text"]}\n\nnew_text: {stabilize(normalize(page.get_text())) }")
+    # print(f"Len of old_text {len(pages[matching_id]["clean_text"])}, of new_text {len(stabilize(normalize(page.get_text())) )}")
     print(f"Highest Score for page {filename}: {highest_score, matching_id}")
+    
+    return highest_score, matching_id 
     
     
 # Normalize text for parsing
@@ -166,19 +222,8 @@ def parse_layout(page):
                     
     # print(f"Layout: {spans}")
     return spans
-
-# def get_label_id(fingerprint):
-#     label = ""
-#     id = ""
-#     if len(fingerprint["headings"]) > 0 and len(fingerprint["headings"][0]):
-#         label = fingerprint["headings"][0]
-#     elif len(fingerprint["layout"]) > 0:
-#         label = fingerprint["layout"][0]
-#     elif len(fingerprint["keywords"]) > 0:
-#         label = fingerprint["keywords"][0]
         
-#     id = label.replace(" ", "")
-#     id = id[0].lower() + id[1:]
-    
-#     return label, id
         
+def numeric_key(filename):
+    parts = re.split(r'(\d+)', filename)
+    return [int(p) if p.isdigit() else p for p in parts]

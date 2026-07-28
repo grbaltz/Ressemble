@@ -25,7 +25,7 @@ class PDFReader:
             new_pdf = pymupdf.open()  
             new_pdf.insert_pdf(doc, from_page=page_num, to_page=page_num)
             
-            output_path = self.import_path / f"{base_name}_{page_num}"
+            output_path = self.import_path / f"{page_num}.pdf"
             print(f"output_path: {output_path}")
             
             new_pdf.save(output_path)
