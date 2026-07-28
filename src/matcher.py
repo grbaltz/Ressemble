@@ -2,13 +2,15 @@ import pymupdf
 import re
 import json
 import hashlib
+import shutil
 from collections import Counter
 from pathlib import Path
-from pdf_reader import PDFReader
+from src.pdf_reader import PDFReader
 from rapidfuzz import fuzz
 
 PAGES_CONFIG_PATH = Path("./src/pages.json")
 TEMPLATE_CONFIG_PATH = Path("./src/template.json")
+BASE_DATA_PATH = Path("./src/import/split_pages/")
 MINIMUM_MATCH_SCORE = 95
 
 STOPWORDS = {
@@ -25,11 +27,30 @@ STOPWORDS = {
     "an"
 }
 
-# scan imported template pages, match to existing configs
-def match_pages(match_dir):
-    template_config = []
+def clear_directory(directory_path):
+    for item in Path(directory_path).iterdir():
+        if item.is_dir():
+            shutil.rmtree(item)
+        else:
+            item.unlink()
+
+def prepare_report(pdf, log, progress):
+    print(f"Report from GUI: {pdf}")
     
-    for f in sorted(match_dir.iterdir(), key=lambda x: numeric_key(x.name)):
+    # template = Path(find_ext(pdf, "pdf")[0])
+    doc = PDFReader(pdf)
+    text = doc.get_text()
+    clear_directory(BASE_DATA_PATH)
+    doc.split_pages()
+
+    # match pages in template to existing (basically check if new template)
+    match_pages(pdf, BASE_DATA_PATH, log, progress)
+
+# scan imported template pages, match to existing configs
+def match_pages(pdf, match_dir, log=None, progress=None):
+    template_config = { "filename": pdf, "pages": []}
+    
+    for i, f in enumerate(sorted(match_dir.iterdir(), key=lambda x: numeric_key(x.name))):
         if f.is_file():
             print(f"File {f.name}")
         else:
@@ -63,7 +84,12 @@ def match_pages(match_dir):
             with open(PAGES_CONFIG_PATH, "w") as pages_file:
                 json.dump(pages, pages_file)
         
-        template_config.append({ "id": id, "label": pages[id]["label"], "placeholder": pages[id]["placeholder"] }) 
+        if log:
+            log(f"Found {pages[id]["label"]}, saving position as {i + 1}")
+
+        if progress:
+            progress(i+1)    
+        template_config["pages"].append({ "id": id, "label": pages[id]["label"], "placeholder": pages[id]["placeholder"] }) 
     
     with open(TEMPLATE_CONFIG_PATH, "w") as template:
         json.dump(template_config, template)
@@ -155,7 +181,6 @@ def score_page(page, filename):
     
     return highest_score, matching_id 
     
-    
 # Normalize text for parsing
 def normalize(text):
     text = text.lower()
@@ -222,7 +247,6 @@ def parse_layout(page):
                     
     # print(f"Layout: {spans}")
     return spans
-        
         
 def numeric_key(filename):
     parts = re.split(r'(\d+)', filename)
