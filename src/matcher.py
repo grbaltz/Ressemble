@@ -34,7 +34,7 @@ def clear_directory(directory_path):
         else:
             item.unlink()
 
-def prepare_report(pdf, log, progress):
+def prepare_report(pdf, log, progress, requestLabel):
     print(f"Report from GUI: {pdf}")
     
     # template = Path(find_ext(pdf, "pdf")[0])
@@ -44,10 +44,10 @@ def prepare_report(pdf, log, progress):
     doc.split_pages()
 
     # match pages in template to existing (basically check if new template)
-    match_pages(pdf, BASE_DATA_PATH, log, progress)
+    match_pages(pdf, BASE_DATA_PATH, log, progress, requestLabel)
 
 # scan imported template pages, match to existing configs
-def match_pages(pdf, match_dir, log=None, progress=None):
+def match_pages(pdf, match_dir, log=None, progress=None, requestLabel=None):
     template_config = { "filename": pdf, "pages": []}
     
     for i, f in enumerate(sorted(match_dir.iterdir(), key=lambda x: numeric_key(x.name))):
@@ -70,15 +70,16 @@ def match_pages(pdf, match_dir, log=None, progress=None):
             #     label = pages[id]["headings"][0]
             # else:
             print(f"Please label page {id} with headings: {pages[id]["headings"]}")
-            label = input()
+            if requestLabel:
+                label, placeholder = requestLabel(f.name)
+            # label = input()
             id_from_label = normalize(label)
             pages[id]["label"] = label
             pages[id]["id"] = id_from_label
             
             # check whether to be replaced
             print(f"Set file as placeholder? (Y/n)")
-            placeholder = input().lower()
-            placeholder = placeholder == 'y'
+            # placeholder = input().lower()
             pages[id]["placeholder"] = placeholder
             
             with open(PAGES_CONFIG_PATH, "w") as pages_file:
@@ -89,6 +90,7 @@ def match_pages(pdf, match_dir, log=None, progress=None):
 
         if progress:
             progress(i+1)    
+
         template_config["pages"].append({ "id": id, "label": pages[id]["label"], "placeholder": pages[id]["placeholder"] }) 
     
     with open(TEMPLATE_CONFIG_PATH, "w") as template:

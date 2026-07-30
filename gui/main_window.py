@@ -22,13 +22,15 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QTimeEdit,
+    QInputDialog,
+    QDialog
 )
 from PySide6.QtCore import Qt, QThread
-from gui.worker import AssembleWorker, ScanWorker
-
 import sys
 import json
 from pathlib import Path
+from gui.worker import AssembleWorker, ScanWorker
+from gui.label_dialog import LabelDialog
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -122,6 +124,7 @@ class MainWindow(QMainWindow):
         
         self.worker.log.connect(self.log.append)
         self.worker.progress.connect(self.progress.setValue)
+        self.worker.requestLabel.connect(self.requestLabel)
 
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
@@ -132,6 +135,18 @@ class MainWindow(QMainWindow):
     
     def disable_actions(self):
         self.assemble_button.setEnabled(self.assemble_button.isEnabled() != True)
+        
+    def requestLabel(self, filename):
+        print(f"-- Opening LabelDialog for filename {filename}")
+        # text, ok = QInputDialog.getText(self, "Enter Label", "Enter your label here: ", QLineEdit.Normal, "")
+        dlg = LabelDialog(filename)
+        if dlg.exec() == QDialog.Accepted:
+            self.worker.receive_label(dlg.label(), dlg.is_placeholder())
+        else:
+            self.worker.receive_label(None, False)        
+        
+        # print(f"-- Closed Dialog, here is the dlg details: {dlg.input.text()}")
+        # return dlg.input.text()
         
     def assemble(self):
         self.thread = QThread()
