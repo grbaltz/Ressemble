@@ -1,21 +1,22 @@
 from PySide6.QtCore import QObject, Signal
-from src.matcher import prepare_report
+from src.matcher import prepare_report, get_page_pixmap
 from src.assembler import assemble_report
 import threading
-
             
 class ScanWorker(QObject):
     log = Signal(str)
     progress = Signal(int)
     finished = Signal()
-    requestLabel = Signal(str) # str for filename, __ for pixmap later
-    # labelProvided = Signal(str)
+    request_label = Signal(str, bytes) # str for filename, bytes for pixmap later
+    request_replacements = Signal(str, str, bytes)
     
     def __init__(self, pdf):
         super().__init__()
         self.pdf = pdf
         self._label = None
-        self._placeholder = "n"
+        self._placeholder = False
+        self._pix_bytes = None
+        self._replacement_filenames = None
         self._wait = threading.Event()
 
     def run(self):
@@ -24,19 +25,21 @@ class ScanWorker(QObject):
                 pdf=self.pdf,
                 log=self.log.emit,
                 progress=self.progress.emit,
-                requestLabel=self.request_label
+                request_label=self.get_label,
+                request_replacements=self.get_replacements
             )
         except ScanCancelled:
             self.log.emit("Scan cancelled by user.")
         finally:
             self.finished.emit()
             
-    def request_label(self, filename):
+    # Labeling logic
+    def get_label(self, filename, pix_bytes):
         self._label = None
         self._placeholder = False
         self._wait.clear()
 
-        self.requestLabel.emit(filename)
+        self.request_label.emit(filename, pix_bytes)
 
         self._wait.wait()
         
@@ -49,31 +52,28 @@ class ScanWorker(QObject):
         self._label = label
         self._placeholder = placeholder
         self._wait.set()
-            
-class AssembleWorker(QObject):
-    log = Signal(str)
-    progress = Signal(int)
-    finished = Signal()
-
-    def __init__(self, pdf, output, client_name):
-        super().__init__()
         
-        self.pdf = pdf
-        self.output = output
-        self.client_name = client_name
+    # Replacement logic
+    def get_replacements(self, filename, label, pix_bytes):
+        self._replacement_filenames
+        self._wait.clear()
+        
+        self.request_replacements.emit(filename, label, pix_bytes)
+        
+        self._wait.wait() 
+        
+        if self._replacement_filenames is None:
+            raise ReplacementCancelled()
 
-    def run(self):
-        try:
-            assemble_report(
-                pdf=self.pdf,
-                output=self.output,
-                client_name=self.client_name,
-                log=self.log.emit,
-                progress=self.progress.emit,
-            )
-            
-        finally:
-            self.finished.emit()
+        return self._replacement_filenames
+        
+    def receive_replacements(self, filenames):
+        self._replacement_filenames = filenames
+        
+        self._wait.set()
             
 class ScanCancelled(Exception):
+    pass
+
+class ReplacementCancelled(Exception):
     pass

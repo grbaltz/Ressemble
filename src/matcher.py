@@ -13,6 +13,8 @@ TEMPLATE_CONFIG_PATH = Path("./src/template.json")
 BASE_DATA_PATH = Path("./src/import/split_pages/")
 MINIMUM_MATCH_SCORE = 95
 
+log_text = ""
+
 STOPWORDS = {
     "the",
     "and",
@@ -34,7 +36,7 @@ def clear_directory(directory_path):
         else:
             item.unlink()
 
-def prepare_report(pdf, log, progress, requestLabel):
+def prepare_report(pdf, log, progress, request_label, request_replacements):
     print(f"Report from GUI: {pdf}")
     
     # template = Path(find_ext(pdf, "pdf")[0])
@@ -44,10 +46,10 @@ def prepare_report(pdf, log, progress, requestLabel):
     doc.split_pages()
 
     # match pages in template to existing (basically check if new template)
-    match_pages(pdf, BASE_DATA_PATH, log, progress, requestLabel)
+    match_pages(pdf, BASE_DATA_PATH, log, progress, request_label, request_replacements)
 
 # scan imported template pages, match to existing configs
-def match_pages(pdf, match_dir, log=None, progress=None, requestLabel=None):
+def match_pages(pdf, match_dir, log=None, progress=None, request_label=None, request_replacements=None):
     template_config = { "filename": pdf, "pages": []}
     
     for i, f in enumerate(sorted(match_dir.iterdir(), key=lambda x: numeric_key(x.name))):
@@ -64,29 +66,42 @@ def match_pages(pdf, match_dir, log=None, progress=None, requestLabel=None):
         with open(PAGES_CONFIG_PATH) as pages_file:
             pages = json.load(pages_file)
             
-        if (pages[id].get("id") == "" or pages[id].get("label") == ""):
+        label = pages[id].get("label")
+        placeholder = pages[id].get("placeholder")
             
-            # if (len(pages[id]["headings"]) > 0):
-            #     label = pages[id]["headings"][0]
-            # else:
+        if (pages[id].get("id") == "" or label == ""):
             print(f"Please label page {id} with headings: {pages[id]["headings"]}")
-            if requestLabel:
-                label, placeholder = requestLabel(f.name)
-            # label = input()
+            if request_label:
+                label, placeholder = request_label(f.name, get_page_pixmap(page))
             id_from_label = normalize(label)
             pages[id]["label"] = label
             pages[id]["id"] = id_from_label
-            
-            # check whether to be replaced
-            print(f"Set file as placeholder? (Y/n)")
-            # placeholder = input().lower()
             pages[id]["placeholder"] = placeholder
             
-            with open(PAGES_CONFIG_PATH, "w") as pages_file:
-                json.dump(pages, pages_file)
+            log_text = f"Received label and placeholder for {f.name} as {label} / {placeholder}"
+            log(log_text)
+            print(log_text)                
+            
+        if (placeholder or pages[id].get("placeholder")) and request_replacements:
+            log_text = f"Requesting replacement files for {label}"
+            log(log_text)
+            print(log_text)
+            
+            replacement_filenames = request_replacements(f.name, label, get_page_pixmap(page))
+        
+            if replacement_filenames:
+                pages[id]["replacement_filenames"] = replacement_filenames
+                log_text = f"Replacing {f.name} with {replacement_filenames}"
+                log(log_text)
+                print(log_text)
+            
+        with open(PAGES_CONFIG_PATH, "w") as pages_file:
+            json.dump(pages, pages_file)
         
         if log:
-            log(f"Found {pages[id]["label"]}, saving position as {i + 1}")
+            log_text = f"Found {pages[id]["label"]}, saving position as {i + 1}"
+            log(log_text)
+            print(log_text)
 
         if progress:
             progress(i+1)    
@@ -253,3 +268,8 @@ def parse_layout(page):
 def numeric_key(filename):
     parts = re.split(r'(\d+)', filename)
     return [int(p) if p.isdigit() else p for p in parts]
+
+def get_page_pixmap(page):
+    # page = pymupdf.open(Path(filename)).load_page(0)
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(.5, .5))
+    return pix.tobytes("png")

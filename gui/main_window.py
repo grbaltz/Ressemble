@@ -25,12 +25,15 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QDialog
 )
-from PySide6.QtCore import Qt, QThread
+from PySide6.QtCore import Qt, QThread, QSettings
 import sys
 import json
 from pathlib import Path
-from gui.worker import AssembleWorker, ScanWorker
+from gui.workers import AssembleWorker, ScanWorker
 from gui.label_dialog import LabelDialog
+from gui.replacement_dialog import ReplacementDialog
+
+settings = QSettings("Rebalance", "ReSemble")
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -74,7 +77,6 @@ class MainWindow(QMainWindow):
             if "filename" in config and config["filename"] != "":
                 self.pdf_path.setText(config["filename"])
                 self.scan_pdf()
-                self.log.append("Test")
         
         layout = QGridLayout()
         layout.addWidget(self.title, 0, 0)
@@ -85,9 +87,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.name_label, 2, 0)
         layout.addWidget(self.client_name, 2, 1)
         
-        layout.addWidget(self.progress, 3, 0)
+        layout.addWidget(self.progress, 3, 0, 1, -1)
 
-        layout.addWidget(self.log, 4, 0)
+        layout.addWidget(self.log, 4, 0, 1, -1)
         
         layout.addWidget(self.assemble_button, 5, 0)
         
@@ -100,9 +102,11 @@ class MainWindow(QMainWindow):
         filename, _ = QFileDialog.getOpenFileName(
             self,
             "Choose PDF",
-            "",
+            settings.value("lastTemplateDir"),
             "PDF Files (*.pdf)"
         )
+        
+        settings.setValue("lastTemplateDir", str(Path(filename).parent))
 
         if filename:
             self.pdf_path.setText(filename)
@@ -124,7 +128,8 @@ class MainWindow(QMainWindow):
         
         self.worker.log.connect(self.log.append)
         self.worker.progress.connect(self.progress.setValue)
-        self.worker.requestLabel.connect(self.requestLabel)
+        self.worker.request_label.connect(self.request_label)
+        self.worker.request_replacements.connect(self.request_replacements)
 
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
@@ -136,17 +141,23 @@ class MainWindow(QMainWindow):
     def disable_actions(self):
         self.assemble_button.setEnabled(self.assemble_button.isEnabled() != True)
         
-    def requestLabel(self, filename):
+    def request_label(self, filename, pix_bytes):
         print(f"-- Opening LabelDialog for filename {filename}")
-        # text, ok = QInputDialog.getText(self, "Enter Label", "Enter your label here: ", QLineEdit.Normal, "")
-        dlg = LabelDialog(filename)
+        
+        dlg = LabelDialog(filename, pix_bytes)
         if dlg.exec() == QDialog.Accepted:
             self.worker.receive_label(dlg.label(), dlg.is_placeholder())
         else:
             self.worker.receive_label(None, False)        
         
-        # print(f"-- Closed Dialog, here is the dlg details: {dlg.input.text()}")
-        # return dlg.input.text()
+    def request_replacements(self, filename, pix_bytes):
+        print(f"-- Opening ReplacementDialog for filename {filename}")
+        
+        dlg = ReplacementDialog(filename, pix_bytes)
+        if dlg.exec() == QDialog.Accepted:
+            self.worker.receive_replacements(dlg.replacements())
+        else:
+            self.worker.receive_replacements(None)
         
     def assemble(self):
         self.thread = QThread()
