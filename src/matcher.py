@@ -36,21 +36,37 @@ def clear_directory(directory_path):
         else:
             item.unlink()
 
-def prepare_report(pdf, log, progress, request_label, request_replacements):
+def prepare_report(pdf, refresh, log, progress, request_label, request_sources):
     print(f"Report from GUI: {pdf}")
     
-    # template = Path(find_ext(pdf, "pdf")[0])
     doc = PDFReader(pdf)
-    text = doc.get_text()
     clear_directory(BASE_DATA_PATH)
     doc.split_pages()
+    
+    new_template = refresh or is_new_template(pdf)
 
     # match pages in template to existing (basically check if new template)
-    match_pages(pdf, BASE_DATA_PATH, log, progress, request_label, request_replacements)
+    matched_pages = match_pages(pdf, BASE_DATA_PATH, log, progress)
+    
+    if new_template:
+        request_labels(
+            matched_pages,
+            log,
+            request_label,
+        )
+
+    sources = request_source_files(
+        log,
+        request_sources,
+    )
+
+    save_template(pdf, matched_pages, sources)
+    
+    return matched_pages, sources
 
 # scan imported template pages, match to existing configs
-def match_pages(pdf, match_dir, log=None, progress=None, request_label=None, request_replacements=None):
-    template_config = { "filename": pdf, "pages": []}
+def match_pages(pdf, match_dir, log=None, progress=None):    
+    matched_pages = []
     
     for i, f in enumerate(sorted(match_dir.iterdir(), key=lambda x: numeric_key(x.name))):
         if f.is_file():
@@ -60,60 +76,80 @@ def match_pages(pdf, match_dir, log=None, progress=None, request_label=None, req
         
         doc = pymupdf.open(f)
         page = doc[0]
-        id = fingerprint_page(page, doc.name)
-        # score, matching_id = score_page(page, doc.name)
+        id, matched = fingerprint_page(page, doc.name)
         
-        with open(PAGES_CONFIG_PATH) as pages_file:
-            pages = json.load(pages_file)
-            
-        label = pages[id].get("label")
-        placeholder = pages[id].get("placeholder")
-            
-        if (pages[id].get("id") == "" or label == ""):
-            print(f"Please label page {id} with headings: {pages[id]["headings"]}")
-            if request_label:
-                label, placeholder = request_label(f.name, get_page_pixmap(page))
-            id_from_label = normalize(label)
-            pages[id]["label"] = label
-            pages[id]["id"] = id_from_label
-            pages[id]["placeholder"] = placeholder
-            
-            log_text = f"Received label and placeholder for {f.name} as {label} / {placeholder}"
-            log(log_text)
-            print(log_text)                
-            
-        if (placeholder or pages[id].get("placeholder")) and request_replacements:
-            log_text = f"Requesting replacement files for {label}"
-            log(log_text)
-            print(log_text)
-            
-            replacement_filenames = request_replacements(f.name, label, get_page_pixmap(page))
+        if matched:
+            log(f"Found file {f.name}")
+        else:
+            log(f"New file {f.name}")
         
-            if replacement_filenames:
-                pages[id]["replacement_filenames"] = replacement_filenames
-                log_text = f"Replacing {f.name} with {replacement_filenames}"
-                log(log_text)
-                print(log_text)
+        # id will be same as existing id if matched
+        matched_pages.append({
+            "id": id,
+            "filename": f.name,
+            "page": page,
+        }) 
             
-        with open(PAGES_CONFIG_PATH, "w") as pages_file:
-            json.dump(pages, pages_file)
+    return matched_pages 
         
-        if log:
-            log_text = f"Found {pages[id]["label"]}, saving position as {i + 1}"
-            log(log_text)
-            print(log_text)
-
-        if progress:
-            progress(i+1)    
-
-        template_config["pages"].append({ "id": id, "label": pages[id]["label"], "placeholder": pages[id]["placeholder"] }) 
-    
+def request_labels(
+    matched_pages,
+    log,
+    request_label
+):
+    # Refresh and reset the template
+    log("Refreshing")
     with open(TEMPLATE_CONFIG_PATH, "w") as template:
-        json.dump(template_config, template)
+        json.dump({}, template)
+            
+    with open(PAGES_CONFIG_PATH) as f:
+        pages = json.load(f)
 
+    for page_info in matched_pages:
+        id = page_info["id"]
+        page = page_info["page"]
+
+        label, slot = request_label(
+            page_info["filename"],
+            get_page_pixmap(page)
+        )
+
+        pages[id]["label"] = label
+        pages[id]["id"] = normalize(label)
+        pages[id]["slot"] = slot
+
+    with open(PAGES_CONFIG_PATH, "w") as f:
+        json.dump(pages, f)
+        
+def request_source_files(log, request_sources):
+    log("Selecting EMX and BlackDiamond PDFs...")
+
+    emx_pdf, blackdiamond_pdf = request_sources()
+
+    return {
+        "emx": emx_pdf,
+        "blackdiamond": blackdiamond_pdf,
+    }
+        
+def save_template(pdf, matched_pages, sources):
+    with open(PAGES_CONFIG_PATH) as f:
+        pages = json.load(f)
+        
+    template = { "filename": pdf, "pages": [], "sources": sources}
+    
+    for page_info in matched_pages:
+        id = page_info["id"]
+        
+        template["pages"].append({ "id": id, "label": pages[id]["label"], "placeholder": pages[id]["placeholder"] })
+        
+    with open(TEMPLATE_CONFIG_PATH, "w") as f:
+        json.dump(template, f, indent=2)
+    
 # Scan pages, store them, and compare them to previously scanned
 # pages in order to match prior page orders and detect
 # new pages/slides
+#
+# Returns True if matched
 def fingerprint_page(page, filename):
         # get normalized and stabilized text
         text = page.get_text()
@@ -146,32 +182,27 @@ def fingerprint_page(page, filename):
                 "clean_text": stabilized,
                 "keywords": keywords,
                 "headings": headings,
-                # "layout": layout,
+                "slot": "",
                 "page_width": page.rect.width,
                 "page_height": page.rect.height,
             }
             
             pages[page_hash] = fingerprint
-            # print(f"New fingerprint: {pages[page_hash]}")
-            
-            
             
             with open(PAGES_CONFIG_PATH, "w") as pages_file:
                 json.dump(pages, pages_file)
             
-            return page_hash
+            return page_hash, False
         else:
-            # print(f"Old fingerprint: {pages[matching_id]}")
             pages[matching_id]["clean_text"] = stabilized
             pages[matching_id]["keywords"] = keywords
             pages[matching_id]["headings"] = headings
             pages[matching_id]["page_width"] = page.rect.width
             pages[matching_id]["page_height"] = page.rect.height
-            # print(f"Updated fingerprint: {pages[matching_id]}")
             
             with open(PAGES_CONFIG_PATH, "w") as pages_file:
                 json.dump(pages, pages_file)
-            return matching_id
+            return matching_id, True
                  
 # score page against existing pages.json pages
 def score_page(page, filename):
@@ -273,3 +304,12 @@ def get_page_pixmap(page):
     # page = pymupdf.open(Path(filename)).load_page(0)
     pix = page.get_pixmap(matrix=pymupdf.Matrix(.5, .5))
     return pix.tobytes("png")
+
+def is_new_template(pdf):
+    if not TEMPLATE_CONFIG_PATH.exists():
+        return True
+
+    with open(TEMPLATE_CONFIG_PATH) as f:
+        template = json.load(f)
+
+    return template.get("filename") != pdf
