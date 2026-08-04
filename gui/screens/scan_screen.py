@@ -13,7 +13,7 @@ class ScanScreen(QWidget):
         self.settings = settings
         
         # Title
-        self.title = QLabel()
+        self.title = QLabel("Prepare Report")
         
         # Template select
         # Opens dialog after scanning 
@@ -77,18 +77,11 @@ class ScanScreen(QWidget):
             "PDF Files (*.pdf)"
         )
         
-        self.settings.setValue("lastTemplateDir", str(Path(filename).parent))
 
         if filename:
+            self.settings.setValue("lastTemplateDir", str(Path(filename).parent))
             self.pdf_path.setText(filename)
-            
-        self.scan_pdf()
-        
-        print("Finished scan pdf")
-        
-        # self.main_window.stack.setCurrentWidget(
-        #     self.main_window.template_editor_screen
-        # )
+            self.scan_pdf()
         
     def scan_pdf(self, refresh=False):
         # self.assemble_button.setEnabled(False)
@@ -112,8 +105,16 @@ class ScanScreen(QWidget):
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
+        self.worker.finished.connect(self.on_scan_finished)
         
         self.thread.start()
+        
+    def on_scan_finished(self):
+        print("Finished scan pdf")
+                
+        self.main_window.stack.setCurrentWidget(
+            self.main_window.assemble_screen
+        )
     
     def request_label(self, filename, pix_bytes):
         print(f"-- Opening LabelDialog for filename {filename}")

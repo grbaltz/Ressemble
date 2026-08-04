@@ -4,15 +4,16 @@ from pathlib import Path
 from glob import glob
 import shutil
 from src.pdf_reader import PDFReader
-from src.matcher import match_pages
+from src.scanner import match_pages
 
-# TEMPLATE_PDF = Path('./src/import/template/')
+ADVISORS_PATH = Path("./src/import/advisors")
 
-def find_ext(dr, ext):
-    return glob(path.join(dr,"*.{}".format(ext)))
+def assemble_report(log, request_advisors):
+    select_advisor_files(log, request_advisors)
 
-def assemble_report(output, client_name):
-    print("Start assembling!")
-
-# get page replacement assignments
-# for each page in template.json, get documents to replace it with\
+def select_advisor_files(log, request_advisors):
+    log("Request Advisors")
+    f = Path(ADVISORS_PATH / "advisors").name
+    advisors = request_advisors(f)
+    print(f"Selected advisors: {advisors}")
+    

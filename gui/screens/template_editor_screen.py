@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QLabel, QLineEdit, QPushButton, QProgressBar, QTextEdit, QGridLayout, QWidget
+from PySide6.QtWidgets import QLabel, QLineEdit, QPushButton, QProgressBar, QTextEdit, QGridLayout, QWidget, QVBoxLayout
 from pathlib import Path
 import json
 

@@ -1,5 +1,5 @@
 from PySide6.QtCore import QObject, Signal
-from src.matcher import prepare_report, get_page_pixmap
+from src.scanner import prepare_report, get_page_pixmap
 from src.assembler import assemble_report
 import threading
             
@@ -25,14 +25,15 @@ class ScanWorker(QObject):
             self.log.emit("------------------------------------------------------------------------------------------------------")
             self.log.emit("Beginning Template Scan")
             self.log.emit("------------------------------------------------------------------------------------------------------")
-            matched_pages, sources = prepare_report(
-                pdf=self.pdf,
-                refresh=self.refresh,
-                log=self.log.emit,
-                progress=self.progress.emit,
-                request_label=self.get_label,
-                request_sources=self.get_sources
-            )
+            print("Moving on immediately TEST")
+            # matched_pages, sources = prepare_report(
+            #     pdf=self.pdf,
+            #     refresh=self.refresh,
+            #     log=self.log.emit,
+            #     progress=self.progress.emit,
+            #     request_label=self.get_label,
+            #     request_sources=self.get_sources
+            # )
         except ScanCancelled:
             self.log.emit("Scan cancelled by user.")
         except SourcesCancelled:
