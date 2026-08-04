@@ -41,12 +41,12 @@ def prepare_report(pdf, refresh, log, progress, request_label, request_sources):
     
     doc = PDFReader(pdf)
     clear_directory(BASE_DATA_PATH)
-    doc.split_pages()
+    split_dir = doc.split_pages()
     
     new_template = refresh or is_new_template(pdf)
 
     # match pages in template to existing (basically check if new template)
-    matched_pages = match_pages(pdf, BASE_DATA_PATH, log, progress)
+    matched_pages = match_pages(pdf, split_dir, log, progress)
     
     if new_template:
         request_labels(
@@ -61,6 +61,8 @@ def prepare_report(pdf, refresh, log, progress, request_label, request_sources):
     )
 
     save_template(pdf, matched_pages, sources)
+    
+    get_bd_order()
     
     return matched_pages, sources
 
@@ -313,3 +315,71 @@ def is_new_template(pdf):
         template = json.load(f)
 
     return template.get("filename") != pdf
+
+def get_bd_order():
+    with open(TEMPLATE_CONFIG_PATH, "r") as t:
+        template = json.load(t)
+    
+    if not template["sources"]["blackdiamond"]:
+        print("No blackdiamond file saved")
+        return
+    
+    doc = PDFReader(template["sources"]["blackdiamond"])
+    split_dir = doc.split_pages()
+    
+    bd1_dir = split_dir / "bd1"
+    bd2_dir = split_dir / "bd2"
+
+    bd1_dir.mkdir(exist_ok=True)
+    bd2_dir.mkdir(exist_ok=True)
+
+    unsorted = []
+    
+    for page_info in sorted(split_dir.glob("*.pdf"), key=lambda x: numeric_key(x.name)):
+        print(f"page_info: {numeric_key(page_info.name)[1]}")
+        
+        doc = pymupdf.open(page_info)
+        page = doc[0]
+        
+        text = page.get_text()
+
+        if "Allocation and Return" not in text:
+            shutil.move(page_info, bd1_dir / page_info.name)
+            continue            
+
+        matches = page.search_for("Value ($)")
+        if not matches:
+            shutil.move(page_info, bd1_dir / page_info.name)
+            continue
+
+        header = matches[0]
+
+        column_rect = pymupdf.Rect(
+            header.x0 - 5,
+            header.y1,
+            header.x1 + 5,
+            page.rect.height
+        )
+
+        text = page.get_text("text", clip=column_rect)
+        
+        numbers = re.findall(r'\d[\d,]*', text)
+
+        total = int(numbers[-1].replace(",", ""))
+
+        shutil.move(page_info, bd2_dir / page_info.name)
+        unsorted.append({"name": Path(page_info).name, "value": total })
+    
+    unsorted.sort(key=lambda x: x["value"], reverse=True)
+
+    pages = [bd2_dir / p["name"] for p in unsorted]
+
+    temps = []
+
+    for i, page in enumerate(pages):
+        tmp = page.with_name(f"tmp_{i}.pdf")
+        page.rename(tmp)
+        temps.append(tmp)
+
+    for i, tmp in enumerate(temps):
+        tmp.rename(bd2_dir / f"{i}.pdf")

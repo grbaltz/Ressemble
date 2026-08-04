@@ -3,107 +3,107 @@
   "pages": [
     {
       "id": "cc455df6cd68",
-      "label": "",
+      "label": "Cover",
       "placeholder": false
     },
     {
       "id": "be9aaad8957c",
-      "label": "",
+      "label": "Agenda",
       "placeholder": false
     },
     {
       "id": "4e052bb15922",
-      "label": "",
+      "label": "a",
       "placeholder": false
     },
     {
       "id": "51fc76b0c5da",
-      "label": "",
+      "label": "s",
       "placeholder": false
     },
     {
       "id": "f1eb39916762",
-      "label": "",
+      "label": "a",
       "placeholder": false
     },
     {
       "id": "23427044ff16",
-      "label": "",
+      "label": "d",
       "placeholder": true
     },
     {
       "id": "3bc8cb08d3c1",
-      "label": "",
+      "label": "f",
       "placeholder": false
     },
     {
       "id": "12ad2a57617d",
-      "label": "",
+      "label": "g",
       "placeholder": true
     },
     {
       "id": "dad1c5ef0522",
-      "label": "",
+      "label": "h",
       "placeholder": false
     },
     {
       "id": "811ce24b0ede",
-      "label": "",
+      "label": "b",
       "placeholder": true
     },
     {
       "id": "01e3bec2863c",
-      "label": "",
+      "label": "n",
       "placeholder": false
     },
     {
       "id": "811ce24b0ede",
-      "label": "",
+      "label": "b",
       "placeholder": true
     },
     {
       "id": "e8a603017c2a",
-      "label": "",
+      "label": "v",
       "placeholder": false
     },
     {
       "id": "6bbcda795671",
-      "label": "",
+      "label": "c",
       "placeholder": false
     },
     {
       "id": "da39a3ee5e6b",
-      "label": "",
+      "label": "v",
       "placeholder": false
     },
     {
       "id": "c3d02a6cb95e",
-      "label": "",
+      "label": "s",
       "placeholder": false
     },
     {
       "id": "58f4660525d6",
-      "label": "",
+      "label": "x",
       "placeholder": false
     },
     {
       "id": "42b1cbe78b6f",
-      "label": "",
+      "label": "z",
       "placeholder": false
     },
     {
       "id": "f1bad5efc0a5",
-      "label": "",
+      "label": "c",
       "placeholder": false
     },
     {
       "id": "da39a3ee5e6b",
-      "label": "",
+      "label": "v",
       "placeholder": false
     }
   ],
   "sources": {
-    "emx": "/home/grbaltz/Development/YearReportCompiler/src/import/fullan EMX (eMoney pgs).pdf",
+    "emx": null,
     "blackdiamond": "/home/grbaltz/Development/YearReportCompiler/src/import/fullan BD (Black Diamond_View360 pgs).pdf"
   }
 }
