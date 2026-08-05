@@ -26,12 +26,6 @@ class ScanScreen(QWidget):
         self.rescan = QPushButton()
         self.rescan.setToolTip("Refresh Template")
         self.rescan.clicked.connect(lambda: self.scan_pdf(True))
-
-        # Client name input
-        self.name_label = QLabel("Enter client name:")
-        self.name_label.setAlignment(Qt.AlignRight)
-        self.client_name = QLineEdit()
-        # self.name_input.textChanged.connect(self.label.setText)
         
         # Progress
         self.progress = QProgressBar()
@@ -47,7 +41,7 @@ class ScanScreen(QWidget):
         # self.assemble_button = QPushButton("Assemble Report")
         # self.assemble_button.clicked.connect(self.assemble)
         
-        with open(Path("./src/template.json")) as template_config:
+        with open(Path("/home/grbaltz/Development/YearReportCompiler/src/template.json")) as template_config:
             config = json.load(template_config)
             
             if "filename" in config and config["filename"] != "":
@@ -125,7 +119,8 @@ class ScanScreen(QWidget):
         
         dlg = LabelDialog(filename, pix_bytes)
         if dlg.exec() == QDialog.Accepted:
-            self.worker.receive_label(dlg.label(), dlg.get_slot())
+            self.worker.receive_label(dlg.label())
+            # self.worker.receive_label(dlg.label(), dlg.get_slot())
         else:
             self.worker.receive_label(None, False)        
         

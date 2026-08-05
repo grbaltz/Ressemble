@@ -7,7 +7,7 @@ class LabelDialog(QDialog):
         super().__init__()
         
         self.filename = filename
-        self.slot = ""
+        # self.slot = ""
         
         self.setWindowTitle("Label Requested")
 
@@ -15,9 +15,9 @@ class LabelDialog(QDialog):
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel
         )
         
-        self.slots = QComboBox()
-        self.slots.addItems(["Normal", "EMX", "Black Diamond"])
-        self.slots.currentTextChanged.connect(self.changed_slot)
+        # self.slots = QComboBox()
+        # self.slots.addItems(["Normal", "EMX", "Black Diamond"])
+        # self.slots.currentTextChanged.connect(self.changed_slot)
         
         # self.slot_label = QLabel("Is Placeholder For:")
         # self.emx = QRadioButton("EMX files")
@@ -43,21 +43,23 @@ class LabelDialog(QDialog):
         layout.addWidget(label, 1, 0, 1, -1)
         layout.addWidget(message, 2, 0, 1, -1)
         layout.addWidget(self.input, 3, 0, 1, -1)
-        layout.addWidget(self.slots, 4, 1, 1, 1)
+        # layout.addWidget(self.slots, 4, 1, 1, 1)
         # layout.addWidget(self.emx, 5, 0)
         # layout.addWidget(self.bd, 5, 1)
         # layout.addWidget(self.placeholder, alignment=Qt.AlignmentFlag.AlignRight)
-        layout.addWidget(self.buttonBox, 5, 0, 1, -1)
+        layout.addWidget(self.buttonBox, 4, 0, 1, -1)
         self.setLayout(layout)
         
-    def changed_slot(self, text):
-        if not text == "Normal":
-            self.slot = text
-        else:
-            self.slot = ""
+    # def changed_slot(self, text):
+    #     if text == "EMX":
+    #         self.slot = "emx"
+    #     elif text == "Black Diamond":
+    #         self.slot = "bd"
+    #     else:
+    #         self.slot = ""
     
     def label(self):
         return self.input.text()
     
-    def get_slot(self):
-        return self.slot
+    # def get_slot(self):
+    #     return self.slot

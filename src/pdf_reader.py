@@ -5,7 +5,7 @@ class PDFReader:
     
     def __init__(self, pdf_path):
         self.pdf_path = Path(pdf_path)
-        self.import_path = Path("./src/import/split_pages/")
+        self.import_path = Path("/home/grbaltz/Development/YearReportCompiler/src/import/split_pages/")
         self.import_path.mkdir(exist_ok=True)
 
     def get_text(self):

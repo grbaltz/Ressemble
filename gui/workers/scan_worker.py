@@ -14,7 +14,7 @@ class ScanWorker(QObject):
         super().__init__()
         self.pdf = pdf
         self._label = None
-        self._slot = False
+        # self._slot = False
         self._pix_bytes = None
         self._matched_pages = None
         self._sources = None
@@ -60,7 +60,7 @@ class ScanWorker(QObject):
     # Labeling logic
     def get_label(self, filename, pix_bytes):
         self._label = None
-        self._slot = False
+        # self._slot = False
         self._wait.clear()
 
         self.request_label.emit(filename, pix_bytes)
@@ -70,11 +70,11 @@ class ScanWorker(QObject):
         if self._label is None:
             raise ScanCancelled()
 
-        return self._label, self._slot
+        return self._label
 
-    def receive_label(self, label, slot):        
+    def receive_label(self, label):        
         self._label = label
-        self._slot = slot
+        # self._slot = slot
         self._wait.set()
         
     def get_sources(self):

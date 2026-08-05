@@ -3,7 +3,7 @@ from PySide6.QtCore import QObject, Signal, QSettings
 from PySide6.QtGui import QImage, QPixmap
 from pathlib import Path
 
-settings = QSettings("Rebalance", "ReSemble")
+settings = QSettings("Rebalance", "Ressemble")
 
 class SourcesDialog(QDialog):    
     def __init__(self):

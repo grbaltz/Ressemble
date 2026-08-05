@@ -38,9 +38,9 @@ from gui.screens.assemble_screen import AssembleScreen
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.settings = QSettings("Rebalance", "ReSemble")
+        self.settings = QSettings("Rebalance", "Ressemble")
         
-        self.setWindowTitle("ReSemble")
+        self.setWindowTitle("Ressemble")
         self.resize(700, 500)
         
         self.stack = QStackedWidget()

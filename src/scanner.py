@@ -8,11 +8,13 @@ from pathlib import Path
 from src.pdf_reader import PDFReader
 from rapidfuzz import fuzz
 
-PAGES_CONFIG_PATH = Path("./src/pages.json")
-TEMPLATE_CONFIG_PATH = Path("./src/template.json")
-BASE_DATA_PATH = Path("./src/import/split_pages/")
-ADVISORS_PATH = Path("./src/import/advisors")
+PAGES_CONFIG_PATH = Path("/home/grbaltz/Development/YearReportCompiler/src/pages.json")
+TEMPLATE_CONFIG_PATH = Path("/home/grbaltz/Development/YearReportCompiler/src/template.json")
+BASE_DATA_PATH = Path("/home/grbaltz/Development/YearReportCompiler/src/import/split_pages")
+ADVISORS_PATH = Path("/home/grbaltz/Development/YearReportCompiler/src/import/advisors")
 MINIMUM_MATCH_SCORE = 95
+IMAGE_MATCH_SCORE = 90   # slightly looser than text match, since avg-hash is coarser
+IMAGE_HASH_SIZE = 16     # render to a 16x16 grayscale grid -> 256-bit hash
 
 log_text = ""
 
@@ -120,14 +122,14 @@ def request_labels(
         if id not in new_page_ids:
             continue
 
-        label, slot = request_label(
+        label = request_label(
             page_info["filename"],
             get_page_pixmap(page)
         )
 
         pages[id]["label"] = label
         pages[id]["id"] = normalize(label)
-        pages[id]["slot"] = slot
+        # pages[id]["slot"] = slot
 
     with open(PAGES_CONFIG_PATH, "w") as f:
         json.dump(pages, f)
@@ -152,73 +154,98 @@ def request_source_files(log, request_sources):
 #
 # Returns True if matched
 def fingerprint_page(page, filename):
-        # get normalized and stabilized text
-        text = page.get_text()
-        normalized = normalize(text)
-        stabilized = stabilize(normalized)
-        slot = ""
-        
-        # get keywords
-        keywords = parse_keywords(stabilized)
-        
-        # get headings
-        headings = parse_headings(page)
-        
-        # check for specific page criteria
-        # cover
-        if re.search(r'household presentation for date', stabilized, re.IGNORECASE):
-            slot = "cover"
+    # get normalized and stabilized text
+    text = page.get_text()
+    normalized = normalize(text)
+    stabilized = stabilize(normalized)
+    slot = ""
 
-        # advisors
-        if re.search(r'your rebalance team', stabilized, re.IGNORECASE):
-            slot = "advisors"
+    # is image only page: no text
+    is_image_page = len(text.strip()) == 0
+    
+    # get keywords
+    keywords = parse_keywords(stabilized)
+    
+    # get headings
+    headings = parse_headings(page)
+    
+    # check for specific page criteria
+    # cover
+    if re.search(r'household presentation for date', stabilized, re.IGNORECASE):
+        slot = "cover"
 
-        # enroll/enrolled plan360
+    # advisors
+    if re.search(r'your rebalance team', stabilized, re.IGNORECASE):
+        slot = "advisors"
 
-        # bd header page
+    # emx automatic
+    if re.search(r"EMX financial plan", stabilized, re.IGNORECASE) and re.search(r"Cash Flow Report and Net Worth Statement", stabilized, re.IGNORECASE):
+        slot = "emx"
 
-        # 
-        
-        # compare to see if new
+    if re.search(r"insert black diamond performance report", stabilized, re.IGNORECASE):
+        slot = "bd"
+
+    # bd automatic
+
+    # enroll/enrolled plan360
+
+    # bd header page
+
+    # 
+
+    image_hash = None
+
+    # score and compare against previous pages
+    if is_image_page:
+        image_hash = get_image_hash(page)
+        score, matching_id = score_page_visual(image_hash, filename)
+        match_threshold = IMAGE_MATCH_SCORE
+        # get id from image hash, not empty text
+        page_hash = hashlib.sha1(image_hash.encode()).hexdigest()[:12]
+    else:
         score, matching_id = score_page(page, filename)
-        
-        with open(PAGES_CONFIG_PATH) as pages_file:
-            pages = json.load(pages_file)      
-        
+        match_threshold = MINIMUM_MATCH_SCORE
         page_hash = hashlib.sha1(normalized.encode()).hexdigest()[:12]
-        print(f"Page hash: {page_hash}, matching_id: {matching_id}, match? {page_hash == matching_id}")
+    
+    with open(PAGES_CONFIG_PATH) as pages_file:
+        pages = json.load(pages_file)      
+    
+    print(f"Page hash: {page_hash}, matching_id: {matching_id}, match? {page_hash == matching_id}")
+    
+    # if new, store as new 
+    if (score < match_threshold and page_hash != matching_id):            
+        fingerprint = {
+            "id": "",
+            "label": "",
+            "clean_text": stabilized,
+            "keywords": keywords,
+            "headings": headings,
+            "slot": slot,
+            "page_width": page.rect.width,
+            "page_height": page.rect.height,
+            "filename": filename,
+            "image_hash": image_hash,
+        }
         
-        # if new, store as new 
-        if (score < MINIMUM_MATCH_SCORE and page_hash != matching_id):            
-            fingerprint = {
-                "id": "",
-                "label": "",
-                "clean_text": stabilized,
-                "keywords": keywords,
-                "headings": headings,
-                "slot": slot,
-                "page_width": page.rect.width,
-                "page_height": page.rect.height,
-                "filename": filename,
-            }
-            
-            pages[page_hash] = fingerprint
-            
-            with open(PAGES_CONFIG_PATH, "w") as pages_file:
-                json.dump(pages, pages_file)
-            
-            return page_hash, False
-        else:
-            pages[matching_id]["clean_text"] = stabilized
-            pages[matching_id]["keywords"] = keywords
-            pages[matching_id]["headings"] = headings
-            pages[matching_id]["page_width"] = page.rect.width
-            pages[matching_id]["page_height"] = page.rect.height
-            pages[matching_id]["filename"] = filename
-            
-            with open(PAGES_CONFIG_PATH, "w") as pages_file:
-                json.dump(pages, pages_file)
-            return matching_id, True
+        pages[page_hash] = fingerprint
+        
+        with open(PAGES_CONFIG_PATH, "w") as pages_file:
+            json.dump(pages, pages_file)
+        
+        return page_hash, False
+    else:
+        pages[matching_id]["clean_text"] = stabilized
+        pages[matching_id]["keywords"] = keywords
+        pages[matching_id]["headings"] = headings
+        pages[matching_id]["page_width"] = page.rect.width
+        pages[matching_id]["page_height"] = page.rect.height
+        pages[matching_id]["filename"] = filename
+        pages[matching_id]["image_hash"] = image_hash
+        pages[matching_id]["slot"] = slot if not pages[matching_id].get("slot") else pages[matching_id].get("slot")
+        
+        with open(PAGES_CONFIG_PATH, "w") as pages_file:
+            json.dump(pages, pages_file)
+        return matching_id, True
                  
 # score page against existing pages.json pages
 def score_page(page, filename):
@@ -244,7 +271,7 @@ def score_page(page, filename):
     print(f"Highest Score for page {filename}: {highest_score, matching_id}")
     
     return highest_score, matching_id 
-    
+
 # Normalize text for parsing
 def normalize(text):
     text = text.lower()
@@ -315,6 +342,42 @@ def parse_layout(page):
 def numeric_key(filename):
     parts = re.split(r'(\d+)', filename)
     return [int(p) if p.isdigit() else p for p in parts]
+
+def get_image_hash(page, hash_size=IMAGE_HASH_SIZE):
+    rect = page.rect
+    matrix = pymupdf.Matrix(hash_size / rect.width, hash_size / rect.height)
+    pix = page.get_pixmap(matrix=matrix, colorspace=pymupdf.csGRAY, alpha=False)
+    pixels = list(pix.samples)
+    avg = sum(pixels) / len(pixels)
+    return "".join("1" if p > avg else "0" for p in pixels)
+
+def hamming_distance(hash_a, hash_b):
+    if len(hash_a) != len(hash_b):
+        # mismatched hash sizes (old data from before this change)
+        return max(len(hash_a), len(hash_b))
+    return sum(a != b for a, b in zip(hash_a, hash_b))
+
+def score_page_visual(image_hash, filename):
+    with open(PAGES_CONFIG_PATH) as pages_file:
+        pages = json.load(pages_file) 
+
+    highest_score = 0
+    matching_id = 0
+
+    for old_id, data in pages.items():
+        old_hash = data.get("image_hash")
+        if not old_hash:
+            continue
+
+        distance = hamming_distance(old_hash, image_hash)
+        score = 100 * (1 - distance / len(image_hash))
+
+        if score > highest_score:
+            highest_score = score
+            matching_id = old_id
+
+    print(f"Highest visual score for page {filename}: {highest_score, matching_id}")
+    return highest_score, matching_id
 
 def get_page_pixmap(page):
     # page = pymupdf.open(Path(filename)).load_page(0)
