@@ -3,7 +3,6 @@ from PySide6.QtCore import Qt, QThread, QSettings
 from pathlib import Path
 import json
 from gui.workers.assemble_worker import AssembleWorker
-from gui.dialogs.advisors_dialog import AdvisorsDialog
 
 class AssembleScreen(QWidget):
     def __init__(self, main_window, settings):
@@ -33,8 +32,14 @@ class AssembleScreen(QWidget):
         
     def assemble(self):
         self.thread = QThread()
+
+        result = self.main_window.scan_results
         
-        self.worker = AssembleWorker()
+        self.worker = AssembleWorker(
+            matched_pages=result["matched_pages"],
+            sources=result["sources"],
+            advisors_file=result["advisors_file"],
+        )
         
         self.worker.moveToThread(self.thread)
 
@@ -42,19 +47,10 @@ class AssembleScreen(QWidget):
 
         self.worker.log.connect(self.log.append)
         self.worker.progress.connect(self.progress.setValue)
-        self.worker.request_advisors.connect(self.request_advisors)
+        # self.worker.request_advisors.connect(self.request_advisors)
 
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
         self.thread.finished.connect(self.thread.deleteLater)
         
         self.thread.start()
-        
-    def request_advisors(self, dir):
-        print(f"-- Opening AdvisorsDialog")
-
-        dlg = AdvisorsDialog()
-        if dlg.exec() == QDialog.Accepted:
-            self.worker.receive_advisors(dlg.advisors())
-        else:
-            self.worker.receive_advisors(None)

@@ -25,6 +25,7 @@ class AdvisorsDialog(QDialog):
         )
         
         self.list_widget = QListWidget()
+        self.list_widget.itemChanged.connect(self.changed_selection)
         
         for advisor in ADVISOR_OPTIONS:
             item = QListWidgetItem(advisor)
@@ -45,9 +46,21 @@ class AdvisorsDialog(QDialog):
         layout.addWidget(self.buttonBox)
         self.setLayout(layout)
         
-    def changed_selection(self, values):
-        print(f"Selection changed: {values}")
-        self._advisors = values
+    def changed_selection(self, item):
+        selected = [
+            self.list_widget.item(i).text()
+            for i in range(self.list_widget.count())
+            if self.list_widget.item(i).checkState() == Qt.Checked
+        ]
+
+        print(selected)
         
     def advisors(self):
-        return self._advisors
+        selected = []
+
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.checkState() == Qt.Checked:
+                selected.append(item.text())
+
+        return selected

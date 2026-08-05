@@ -3,6 +3,7 @@ from PySide6.QtCore import Qt, QThread, QSettings
 from gui.workers.scan_worker import ScanWorker
 from gui.dialogs.label_dialog import LabelDialog
 from gui.dialogs.sources_dialog import SourcesDialog
+from gui.dialogs.advisors_dialog import AdvisorsDialog
 from pathlib import Path
 import json
 
@@ -101,6 +102,7 @@ class ScanScreen(QWidget):
         self.worker.progress.connect(self.progress.setValue)        
         self.worker.request_label.connect(self.request_label)
         self.worker.request_sources.connect(self.request_sources)
+        self.worker.request_advisors.connect(self.request_advisors)
 
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
@@ -109,8 +111,10 @@ class ScanScreen(QWidget):
         
         self.thread.start()
         
-    def on_scan_finished(self):
+    def on_scan_finished(self, results):
         print("Finished scan pdf")
+
+        self.main_window.scan_results = results
                 
         self.main_window.stack.setCurrentWidget(
             self.main_window.assemble_screen
@@ -133,3 +137,12 @@ class ScanScreen(QWidget):
             self.worker.receive_sources(dlg.sources())
         else:
             self.worker.receive_sources(None)
+            
+    def request_advisors(self):
+        print(f"-- Opening AdvisorsDialog")
+
+        dlg = AdvisorsDialog()
+        if dlg.exec() == QDialog.Accepted:
+            self.worker.receive_advisors(dlg.advisors())
+        else:
+            self.worker.receive_advisors(None)

@@ -11,6 +11,7 @@ from rapidfuzz import fuzz
 PAGES_CONFIG_PATH = Path("./src/pages.json")
 TEMPLATE_CONFIG_PATH = Path("./src/template.json")
 BASE_DATA_PATH = Path("./src/import/split_pages/")
+ADVISORS_PATH = Path("./src/import/advisors")
 MINIMUM_MATCH_SCORE = 95
 
 log_text = ""
@@ -46,11 +47,12 @@ def prepare_report(pdf, refresh, log, progress, request_label, request_sources):
     new_template = refresh or is_new_template(pdf)
 
     # match pages in template to existing (basically check if new template)
-    matched_pages = match_pages(pdf, split_dir, log, progress)
+    matched_pages, new_page_ids = match_pages(pdf, split_dir, log, progress)
     
-    if new_template:
+    if new_template or len(new_page_ids) > 0:
         request_labels(
             matched_pages,
+            new_page_ids,
             log,
             request_label,
         )
@@ -61,7 +63,8 @@ def prepare_report(pdf, refresh, log, progress, request_label, request_sources):
     )
 
     save_template(pdf, matched_pages, sources)
-    
+
+    get_emx_order()
     get_bd_order()
     
     return matched_pages, sources
@@ -69,6 +72,7 @@ def prepare_report(pdf, refresh, log, progress, request_label, request_sources):
 # scan imported template pages, match to existing configs
 def match_pages(pdf, match_dir, log=None, progress=None):    
     matched_pages = []
+    new_page_ids = []
     
     for i, f in enumerate(sorted(match_dir.iterdir(), key=lambda x: numeric_key(x.name))):
         if f.is_file():
@@ -84,6 +88,7 @@ def match_pages(pdf, match_dir, log=None, progress=None):
             log(f"Found file {f.name}")
         else:
             log(f"New file {f.name}")
+            new_page_ids.append(id)
         
         # id will be same as existing id if matched
         matched_pages.append({
@@ -92,10 +97,11 @@ def match_pages(pdf, match_dir, log=None, progress=None):
             "page": page,
         }) 
             
-    return matched_pages 
+    return matched_pages, new_page_ids
         
 def request_labels(
     matched_pages,
+    new_page_ids,
     log,
     request_label
 ):
@@ -110,6 +116,9 @@ def request_labels(
     for page_info in matched_pages:
         id = page_info["id"]
         page = page_info["page"]
+
+        if id not in new_page_ids:
+            continue
 
         label, slot = request_label(
             page_info["filename"],
@@ -128,24 +137,14 @@ def request_source_files(log, request_sources):
 
     emx_pdf, blackdiamond_pdf = request_sources()
 
-    return {
-        "emx": emx_pdf,
-        "blackdiamond": blackdiamond_pdf,
-    }
-        
-def save_template(pdf, matched_pages, sources):
-    with open(PAGES_CONFIG_PATH) as f:
-        pages = json.load(f)
-        
-    template = { "filename": pdf, "pages": [], "sources": sources}
-    
-    for page_info in matched_pages:
-        id = page_info["id"]
-        
-        template["pages"].append({ "id": id, "label": pages[id]["label"], "placeholder": pages[id]["placeholder"] })
-        
-    with open(TEMPLATE_CONFIG_PATH, "w") as f:
-        json.dump(template, f, indent=2)
+    with Path(emx_pdf) as emx_dir, Path(blackdiamond_pdf) as blackdiamond_dir:
+        print(f"emx_dir: {emx_dir.stem}, bd_dir: {blackdiamond_dir.stem}")
+        return {
+            "emx_pdf": emx_pdf,
+            "emx_dir": str(Path(BASE_DATA_PATH / emx_dir.stem)),
+            "blackdiamond_pdf": blackdiamond_pdf,
+            "blackdiamond_dir": str(Path(BASE_DATA_PATH / blackdiamond_dir.stem)),
+        }
     
 # Scan pages, store them, and compare them to previously scanned
 # pages in order to match prior page orders and detect
@@ -157,6 +156,7 @@ def fingerprint_page(page, filename):
         text = page.get_text()
         normalized = normalize(text)
         stabilized = stabilize(normalized)
+        slot = ""
         
         # get keywords
         keywords = parse_keywords(stabilized)
@@ -164,8 +164,20 @@ def fingerprint_page(page, filename):
         # get headings
         headings = parse_headings(page)
         
-        # get layout
-        # layout = parse_layout(page)
+        # check for specific page criteria
+        # cover
+        if re.search(r'household presentation for date', stabilized, re.IGNORECASE):
+            slot = "cover"
+
+        # advisors
+        if re.search(r'your rebalance team', stabilized, re.IGNORECASE):
+            slot = "advisors"
+
+        # enroll/enrolled plan360
+
+        # bd header page
+
+        # 
         
         # compare to see if new
         score, matching_id = score_page(page, filename)
@@ -184,9 +196,10 @@ def fingerprint_page(page, filename):
                 "clean_text": stabilized,
                 "keywords": keywords,
                 "headings": headings,
-                "slot": "",
+                "slot": slot,
                 "page_width": page.rect.width,
                 "page_height": page.rect.height,
+                "filename": filename,
             }
             
             pages[page_hash] = fingerprint
@@ -201,6 +214,7 @@ def fingerprint_page(page, filename):
             pages[matching_id]["headings"] = headings
             pages[matching_id]["page_width"] = page.rect.width
             pages[matching_id]["page_height"] = page.rect.height
+            pages[matching_id]["filename"] = filename
             
             with open(PAGES_CONFIG_PATH, "w") as pages_file:
                 json.dump(pages, pages_file)
@@ -316,15 +330,49 @@ def is_new_template(pdf):
 
     return template.get("filename") != pdf
 
+def save_template(pdf, matched_pages, sources):
+    with open(PAGES_CONFIG_PATH) as f:
+        pages = json.load(f)
+        
+    template = { "filename": pdf, "pages": [], "sources": sources}
+    
+    for page_info in matched_pages:
+        id = page_info["id"]
+        
+        template["pages"].append({
+            "id": id, 
+            "label": pages[id].get("label"),  
+            "filename": pages[id].get("filename"), 
+            "placeholder": pages[id].get("placeholder"), 
+            "slot": pages[id].get("slot")
+        })
+        
+    with open(TEMPLATE_CONFIG_PATH, "w") as f:
+        json.dump(template, f, indent=2)
+
+def get_emx_order():
+    with open(TEMPLATE_CONFIG_PATH, "r") as t:
+        template = json.load(t)
+    
+    if not template["sources"]["emx_pdf"]:
+        print("No emx file saved")
+        return
+    
+    doc = PDFReader(template["sources"]["emx_pdf"])
+    split_dir = doc.split_pages()
+
+    for page in sorted(split_dir.glob("*.pdf"), key=lambda x: numeric_key(x.name)):
+        shutil.move(page, split_dir / page.name)
+
 def get_bd_order():
     with open(TEMPLATE_CONFIG_PATH, "r") as t:
         template = json.load(t)
     
-    if not template["sources"]["blackdiamond"]:
+    if not template["sources"]["blackdiamond_pdf"]:
         print("No blackdiamond file saved")
         return
     
-    doc = PDFReader(template["sources"]["blackdiamond"])
+    doc = PDFReader(template["sources"]["blackdiamond_pdf"])
     split_dir = doc.split_pages()
     
     bd1_dir = split_dir / "bd1"
@@ -383,3 +431,23 @@ def get_bd_order():
 
     for i, tmp in enumerate(temps):
         tmp.rename(bd2_dir / f"{i}.pdf")
+        
+def select_advisor_file(log, request_advisors):
+    log("Request Advisors")
+    advisors = request_advisors()
+    advisors_filename = "_".join(advisors).strip().lower().replace(" ", "") + ".pdf"
+    print(f"Selected advisors: {advisors} {advisors_filename}")
+    path = Path(ADVISORS_PATH / advisors_filename)
+    print(f"path {path}, exists? {path.exists()}")
+    
+    if path.exists() and path.is_file():
+        with open(TEMPLATE_CONFIG_PATH, "r") as t:
+            template = json.load(t)
+        
+        template["advisors_filename"] = str(path)
+        
+        with open(TEMPLATE_CONFIG_PATH, "w") as t:
+            json.dump(template, t)
+        
+        print("dumped")
+        return path
