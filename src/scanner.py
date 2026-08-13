@@ -8,10 +8,12 @@ from pathlib import Path
 from src.pdf_reader import PDFReader
 from rapidfuzz import fuzz
 
-PAGES_CONFIG_PATH = Path("/home/grbaltz/Development/YearReportCompiler/src/pages.json")
-TEMPLATE_CONFIG_PATH = Path("/home/grbaltz/Development/YearReportCompiler/src/template.json")
-BASE_DATA_PATH = Path("/home/grbaltz/Development/YearReportCompiler/src/import/split_pages")
-ADVISORS_PATH = Path("/home/grbaltz/Development/YearReportCompiler/src/import/advisors")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+PAGES_CONFIG_PATH = REPO_ROOT / "src" / "pages.json"
+TEMPLATE_CONFIG_PATH = REPO_ROOT / "src" / "template.json"
+BASE_DATA_PATH = REPO_ROOT / "src" / "import" / "split_pages"
+ADVISORS_PATH = REPO_ROOT / "src" / "import" / "advisors"
 MINIMUM_MATCH_SCORE = 95
 IMAGE_MATCH_SCORE = 90   # slightly looser than text match, since avg-hash is coarser
 IMAGE_HASH_SIZE = 16     # render to a 16x16 grayscale grid -> 256-bit hash

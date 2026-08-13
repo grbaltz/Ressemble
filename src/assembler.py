@@ -5,25 +5,42 @@ from glob import glob
 import shutil
 import json
 import re
+import tempfile
 import pymupdf
-from datetime import date
+from datetime import date, timedelta
 
-PAGES_CONFIG_PATH = Path("/home/grbaltz/Development/YearReportCompiler/src/pages.json")
-TEMPLATE_CONFIG_PATH = Path("/home/grbaltz/Development/YearReportCompiler/src/template.json")
-BASE_DATA_PATH = Path("/home/grbaltz/Development/YearReportCompiler/src/import/split_pages")
-ADVISORS_PATH = Path("/home/grbaltz/Development/YearReportCompiler/src/import/advisors")
-EXPORT_PATH = Path("/home/grbaltz/Development/YearReportCompiler/src/export")
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
-AVENIR_BLACK_FONT_FILE = "/home/grbaltz/Development/YearReportCompiler/src/fonts/Avenir Black.ttf"
+PAGES_CONFIG_PATH = REPO_ROOT / "src" / "pages.json"
+TEMPLATE_CONFIG_PATH = REPO_ROOT / "src" / "template.json"
+BASE_DATA_PATH = REPO_ROOT / "src" / "import" / "split_pages"
+ADVISORS_PATH = REPO_ROOT / "src" / "import" / "advisors"
+TEAR_SHEETS_PATH = REPO_ROOT / "src" / "import" / "tear_sheets"
+EXPORT_PATH = REPO_ROOT / "src" / "export"
+
+AVENIR_BLACK_FONT_FILE = str(REPO_ROOT / "src" / "fonts" / "Avenir Black.ttf")
+TIMES_NEW_ROMAN_FONT_FILE = str(REPO_ROOT / "src" / "fonts" / "Times New Roman.ttf")
+
+MODEL_PATTERN = re.compile(r"Model:\s*(.+)")
+
+# Page-number footer style: reuses the bundled Times New Roman (already
+# needed for the cover date) and the same muted gray used for the cover
+# page's body copy, at a 0.5in margin matching Acrobat's own footer default.
+PAGE_NUMBER_FONT_FILE = TIMES_NEW_ROMAN_FONT_FILE
+PAGE_NUMBER_COLOR = 7698041
+PAGE_NUMBER_SIZE = 10
+PAGE_NUMBER_MARGIN = 36
 
 def assemble_report(log, progress, advisors_filename, client_name, enrolled):
     # select_advisor_file(log, request_advisors)
     print("assemble")
 
     bd_slot = 1
-    
+    view360_slot = 1
+
     # assemble array of files in order, then combine them
     report_pages = []
+    temp_files = []
     
     ###
     # loop across all files in template.pages
@@ -50,21 +67,19 @@ def assemble_report(log, progress, advisors_filename, client_name, enrolled):
             case "cover":
                 print("Cover slot")
 
+                # Work on a throwaway copy so the source template page
+                # (page["filename"]) stays pristine and reusable next run.
+                cover_page = make_working_copy(page["filename"])
+                temp_files.append(cover_page)
+
                 old_text = "The ### Household"
                 new_text = "The " + client_name + " Household"
-                replace_text_with_formatting(page["filename"], old_text, new_text, AVENIR_BLACK_FONT_FILE)
-                # hits = pdf.search_for(old_text)
+                replace_text_with_formatting(cover_page, old_text, new_text, AVENIR_BLACK_FONT_FILE)
 
+                date_text = format_report_date(next_monday())
+                replace_text_with_formatting(cover_page, "Date, Year", date_text, TIMES_NEW_ROMAN_FONT_FILE)
 
-                # for rect in hits:
-                #     pdf.add_redact_annot(rect)
-                #     pdf.apply_redactions()
-                #     pdf.insert_text(rect.bl - (0, 3), new_text)
-
-                # doc.save(page["filename"], incremental=True, encryption=pymupdf.PDF_ENCRYPT_KEEP)
-                # doc.close()
-
-                report_pages.append(page["filename"])
+                report_pages.append(cover_page)
             case "advisors":
                 print("Advisors slot")
 
@@ -107,23 +122,109 @@ def assemble_report(log, progress, advisors_filename, client_name, enrolled):
 
                 pages = Path(f"{path}/bd{bd_slot}")
                 print(f"pages: {pages}")
-                for p in sorted(pages.glob("*.pdf"), key=lambda x: numeric_key(x.name)):
+                sorted_pages = sorted(pages.glob("*.pdf"), key=lambda x: numeric_key(x.name))
+
+                if bd_slot == 2 and sorted_pages:
+                    tear_sheet = find_tear_sheet_for_model(sorted_pages[0])
+                    if tear_sheet:
+                        report_pages.append(str(tear_sheet))
+
+                for p in sorted_pages:
                     print(f"page {str(p)}")
                     report_pages.append(str(p))
                 bd_slot += 1
+            case "view360":
+                print("View360 slot")
+
+                # Two variant pages, in template order: 1st = not enrolled
+                # pitch, 2nd = enrolled confirmation. Only the one matching
+                # the client's actual enrollment status gets included.
+                is_enrolled_page = view360_slot == 2
+
+                if is_enrolled_page == bool(enrolled):
+                    report_pages.append(page["filename"])
+                else:
+                    print(f"skipping view360 page {view360_slot} (enrolled={enrolled})")
+
+                view360_slot += 1
             case _:
                 print("no slot saved")
                 report_pages.append(page["filename"])
                 continue
 
     print(f"Report pages: {report_pages}")
-    report_path = merge_pdfs(report_pages, f"{EXPORT_PATH}/report_{date.today()}.pdf")
+    try:
+        report_path = merge_pdfs(report_pages, f"{EXPORT_PATH}/report_{date.today()}.pdf")
+        add_page_numbers(report_path, skip_pages=1)
+    finally:
+        for temp_file in temp_files:
+            Path(temp_file).unlink(missing_ok=True)
     print(f"report_page: {report_path}")
     return report_path
+
+def add_page_numbers(pdf_path, skip_pages=1):
+    doc = pymupdf.open(pdf_path)
+
+    fontname = Path(PAGE_NUMBER_FONT_FILE).stem.replace(" ", "-")
+    color = int_to_rgb(PAGE_NUMBER_COLOR)
+    font = pymupdf.Font(fontfile=PAGE_NUMBER_FONT_FILE)
+
+    for page_num in range(skip_pages, len(doc)):
+        page = doc[page_num]
+        page.insert_font(fontname=fontname, fontfile=PAGE_NUMBER_FONT_FILE)
+
+        label = str(page_num - skip_pages + 1)
+        text_width = font.text_length(label, fontsize=PAGE_NUMBER_SIZE)
+
+        x = page.rect.width - PAGE_NUMBER_MARGIN - text_width
+        y = page.rect.height - PAGE_NUMBER_MARGIN
+
+        page.insert_text((x, y), label, fontname=fontname, fontsize=PAGE_NUMBER_SIZE, color=color)
+
+    doc.save(pdf_path, incremental=True, encryption=pymupdf.PDF_ENCRYPT_KEEP)
+    doc.close()
+
+def make_working_copy(source_path):
+    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", prefix="cover_", delete=False)
+    tmp.close()
+    shutil.copy2(source_path, tmp.name)
+    return tmp.name
+
+def next_monday(today=None):
+    today = today or date.today()
+    days_ahead = (7 - today.weekday()) % 7
+    return today + timedelta(days=days_ahead)
+
+def format_report_date(d):
+    return f"{d.strftime('%B')} {d.day}, {d.year}"
 
 def numeric_key(filename):
     parts = re.split(r'(\d+)', filename)
     return [int(p) if p.isdigit() else p for p in parts]
+
+def extract_account_model(pdf_path):
+    doc = pymupdf.open(pdf_path)
+    text = doc[0].get_text()
+    doc.close()
+
+    match = MODEL_PATTERN.search(text)
+    return match.group(1).strip() if match else None
+
+def find_tear_sheet_for_model(pdf_path):
+    model = extract_account_model(pdf_path)
+
+    if not model:
+        print(f"no model found on {pdf_path}")
+        return None
+
+    slug = model.lower().replace(" ", "_")
+    tear_sheet = TEAR_SHEETS_PATH / f"{slug}.pdf"
+
+    if not tear_sheet.exists():
+        print(f"no tear sheet found for model '{model}' (expected {tear_sheet})")
+        return None
+
+    return tear_sheet
 
 def merge_pdfs(pdf_list, output_path):
     merged_pdf = pymupdf.open()
@@ -170,19 +271,29 @@ def replace_text_with_formatting(pdf_path, search_text, replace_text, font_file=
                             size = span["size"]
                             color = int_to_rgb(span["color"])
                             bbox = span["bbox"]
-                            rect = pymupdf.Rect(bbox)
+                            origin = span["origin"]
 
-                            page.add_redact_annot(rect)
+                            # Some fonts (e.g. Avenir-Black here) declare an
+                            # ascender/descender far taller than any glyph
+                            # actually needs, so span["bbox"] can bleed into
+                            # neighboring lines. Redact a generic type-body
+                            # envelope around the baseline instead of the
+                            # full font-metrics bbox.
+                            ascent = size * 0.75
+                            descent = size * 0.25
+                            redact_rect = pymupdf.Rect(bbox[0], origin[1] - ascent, bbox[2], origin[1] + descent)
+
+                            page.add_redact_annot(redact_rect)
                             page.apply_redactions()
 
                             if font_file:
-                                fontname = "Avenir-Black"
+                                fontname = Path(font_file).stem.replace(" ", "-")
                                 page.insert_font(fontname=fontname, fontfile=font_file)
                             else:
                                 fontname = span["font"]
 
                             page.insert_text(
-                                rect.bl,
+                                origin,
                                 replace_text,
                                 fontname=fontname,
                                 fontsize=size,

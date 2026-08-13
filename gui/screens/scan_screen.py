@@ -41,7 +41,8 @@ class ScanScreen(QWidget):
         # self.assemble_button = QPushButton("Assemble Report")
         # self.assemble_button.clicked.connect(self.assemble)
         
-        with open(Path("/home/grbaltz/Development/YearReportCompiler/src/template.json")) as template_config:
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        with open(repo_root / "src" / "template.json") as template_config:
             config = json.load(template_config)
             
             if "filename" in config and config["filename"] != "":

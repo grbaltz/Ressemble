@@ -102,4 +102,4 @@ class AssembleScreen(QWidget):
         self.name_label = name
 
     def save_enroll_state(self, state):
-        self._enrolled = state
+        self._enrolled = bool(state)
