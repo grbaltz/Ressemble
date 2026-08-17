@@ -74,33 +74,39 @@ def prepare_report(pdf, refresh, log, progress, request_label, request_sources):
     return matched_pages, sources
 
 # scan imported template pages, match to existing configs
-def match_pages(pdf, match_dir, log=None, progress=None):    
+def match_pages(pdf, match_dir, log=None, progress=None):
     matched_pages = []
     new_page_ids = []
-    
-    for i, f in enumerate(sorted(match_dir.iterdir(), key=lambda x: numeric_key(x.name))):
+
+    files = sorted(match_dir.iterdir(), key=lambda x: numeric_key(x.name))
+    total = len(files)
+
+    for i, f in enumerate(files):
         if f.is_file():
             print(f"File {f.name}")
         else:
             return
-        
+
         doc = pymupdf.open(f)
         page = doc[0]
         id, matched = fingerprint_page(page, doc.name)
-        
+
         if matched:
             log(f"Found file {f.name}")
         else:
             log(f"New file {f.name}")
             new_page_ids.append(id)
-        
+
         # id will be same as existing id if matched
         matched_pages.append({
             "id": id,
             "filename": f.name,
             "page": page,
-        }) 
-            
+        })
+
+        if progress:
+            progress(i + 1, total)
+
     return matched_pages, new_page_ids
         
 def request_labels(

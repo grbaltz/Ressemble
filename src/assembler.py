@@ -31,7 +31,7 @@ PAGE_NUMBER_COLOR = 7698041
 PAGE_NUMBER_SIZE = 10
 PAGE_NUMBER_MARGIN = 36
 
-def assemble_report(log, progress, advisors_filename, client_name, enrolled):
+def assemble_report(log, progress, advisors_filename, client_name, enrolled, target_date=None):
     # select_advisor_file(log, request_advisors)
     print("assemble")
 
@@ -51,13 +51,27 @@ def assemble_report(log, progress, advisors_filename, client_name, enrolled):
     
     with open(TEMPLATE_CONFIG_PATH, "r") as t:
         template = json.load(t)
-        
+
+    # Number of accounts is however many pages ended up in bd2 -- the same
+    # sorted, one-page-per-account set the tear-sheet model lookup reads.
+    bd_account_count = 0
+    blackdiamond_dir = template["sources"].get("blackdiamond_dir")
+    if blackdiamond_dir:
+        bd2_dir = Path(blackdiamond_dir) / "bd2"
+        if bd2_dir.exists():
+            bd_account_count = len(list(bd2_dir.glob("*.pdf")))
+
+    total_pages = len(template["pages"])
+
     for i, page in enumerate(template["pages"]):
         print(f"page: {page}")
 
+        if progress:
+            progress(i + 1, total_pages)
+
         doc = pymupdf.open(page.get("filename"))
         pdf = doc[0]
-        
+
         # check if placeholder
         if not page.get("placeholder") and not page.get("slot"):
             report_pages.append(page["filename"])
@@ -76,10 +90,27 @@ def assemble_report(log, progress, advisors_filename, client_name, enrolled):
                 new_text = "The " + client_name + " Household"
                 replace_text_with_formatting(cover_page, old_text, new_text, AVENIR_BLACK_FONT_FILE)
 
-                date_text = format_report_date(next_monday())
+                date_text = format_report_date(target_date or next_monday())
                 replace_text_with_formatting(cover_page, "Date, Year", date_text, TIMES_NEW_ROMAN_FONT_FILE)
 
                 report_pages.append(cover_page)
+            case "portfolioAllAccounts" | "portfolioIndividualAccount":
+                print(f"{page['slot']} slot")
+
+                # These two only appear when there's more than one BD
+                # account -- a single account uses the generic title page
+                # instead (portfolioGeneric case below).
+                if bd_account_count == 1:
+                    print(f"skipping {page['slot']} title page (single account)")
+                else:
+                    report_pages.append(page["filename"])
+            case "portfolioGeneric":
+                print("portfolioGeneric slot")
+
+                if bd_account_count == 1:
+                    report_pages.append(page["filename"])
+                else:
+                    print("skipping portfolioGeneric title page (multiple accounts)")
             case "advisors":
                 print("Advisors slot")
 

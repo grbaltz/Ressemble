@@ -1,65 +1,50 @@
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QGridLayout, QLineEdit, QRadioButton, QComboBox
-from PySide6.QtCore import Qt, QObject, Signal
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QVBoxLayout, QLineEdit
 from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtCore import Qt
 
-class LabelDialog(QDialog):    
+class LabelDialog(QDialog):
     def __init__(self, filename, pix_bytes):
         super().__init__()
-        
-        self.filename = filename
-        # self.slot = ""
-        
-        self.setWindowTitle("Label Requested")
 
-        QBtn = (
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
-        )
-        
-        # self.slots = QComboBox()
-        # self.slots.addItems(["Normal", "EMX", "Black Diamond"])
-        # self.slots.currentTextChanged.connect(self.changed_slot)
-        
-        # self.slot_label = QLabel("Is Placeholder For:")
-        # self.emx = QRadioButton("EMX files")
-        # self.emx.toggled.connect(lambda: self.btnstate(self.emx))
-        # self.bd = QRadioButton("Black Diamond files")
-        # self.bd.toggled.connect(lambda: self.btnstate(self.bd))
-        
-        print(f"type {type(pix_bytes)}")
+        self.filename = filename
+
+        self.setWindowTitle("Label New Page")
+
+        title = QLabel("This page wasn't recognized")
+        title.setProperty("class", "title")
+
+        message = QLabel(f"Give it a short label so it can be matched next time:")
+        message.setProperty("class", "subtitle")
+        message.setWordWrap(True)
+
         image = QImage()
         image.loadFromData(pix_bytes)
         pixmap = QPixmap.fromImage(image)
-        label = QLabel()
-        label.setPixmap(pixmap)
-        
+        preview = QLabel()
+        preview.setPixmap(pixmap)
+        preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview.setStyleSheet("border: 1px solid #E1E4E8; border-radius: 6px; padding: 4px; background: white;")
+
+        self.input = QLineEdit()
+        self.input.setPlaceholderText("e.g. Disclosures")
+        self.input.returnPressed.connect(self.accept)
+
+        QBtn = QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         self.buttonBox = QDialogButtonBox(QBtn)
         self.buttonBox.accepted.connect(self.accept)
         self.buttonBox.rejected.connect(self.reject)
 
-        message = QLabel(f"Please provide a label for above page:")
-        self.input = QLineEdit()
-
-        layout = QGridLayout()
-        layout.addWidget(label, 1, 0, 1, -1)
-        layout.addWidget(message, 2, 0, 1, -1)
-        layout.addWidget(self.input, 3, 0, 1, -1)
-        # layout.addWidget(self.slots, 4, 1, 1, 1)
-        # layout.addWidget(self.emx, 5, 0)
-        # layout.addWidget(self.bd, 5, 1)
-        # layout.addWidget(self.placeholder, alignment=Qt.AlignmentFlag.AlignRight)
-        layout.addWidget(self.buttonBox, 4, 0, 1, -1)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(24, 24, 24, 20)
+        layout.setSpacing(14)
+        layout.addWidget(title)
+        layout.addWidget(preview, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(message)
+        layout.addWidget(self.input)
+        layout.addWidget(self.buttonBox)
         self.setLayout(layout)
-        
-    # def changed_slot(self, text):
-    #     if text == "EMX":
-    #         self.slot = "emx"
-    #     elif text == "Black Diamond":
-    #         self.slot = "bd"
-    #     else:
-    #         self.slot = ""
-    
+
+        self.input.setFocus()
+
     def label(self):
         return self.input.text()
-    
-    # def get_slot(self):
-    #     return self.slot

@@ -1,5 +1,5 @@
 #!/bin/bash
 # Change to the project directory
-cd /home/grbaltz/Development/YearReportCompiler
+cd "$(dirname "$0")"
 # Run python from that directory
-/home/grbaltz/Development/YearReportCompiler/pymupdf-venv/bin/python3 main.py
+./pymupdf-venv/bin/python3 main.py

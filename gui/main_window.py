@@ -1,61 +1,49 @@
-from PySide6.QtWidgets import (
-    QApplication,
-    QWidget,
-    QLabel,
-    QPushButton,
-    QLineEdit,
-    QFileDialog,
-    QComboBox,
-    QCheckBox,
-    QTextEdit,
-    QProgressBar,
-    QGridLayout,
-    QMainWindow,
-    QVBoxLayout,
-    QDateEdit,
-    QDateTimeEdit,
-    QDial,
-    QDoubleSpinBox,
-    QFontComboBox,
-    QLCDNumber,
-    QRadioButton,
-    QSlider,
-    QSpinBox,
-    QTimeEdit,
-    QInputDialog,
-    QDialog,
-    QStackedWidget
-)
-from PySide6.QtCore import Qt, QThread, QSettings
-import sys
-import json
-from pathlib import Path
-from gui.workers.assemble_worker import AssembleWorker
+from PySide6.QtWidgets import QMainWindow, QStackedWidget
+from PySide6.QtCore import QSettings
 from gui.screens.scan_screen import ScanScreen
-from gui.screens.template_editor_screen import TemplateEditorScreen
-from gui.screens.assemble_screen import AssembleScreen
+from gui.screens.sources_advisors_screen import SourcesAdvisorsScreen
+from gui.screens.details_screen import DetailsScreen
+from gui.screens.compile_screen import CompileScreen
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = QSettings("Rebalance", "Ressemble")
-        
+
         self.setWindowTitle("Ressemble")
-        self.resize(700, 500)
-        
+        self.resize(760, 560)
+
+        # Shared state, populated as the wizard progresses.
+        self.scan_results = None
+        self.client_name = ""
+        self.target_date = None
+        self.enrolled = False
+
         self.stack = QStackedWidget()
-        
+
+        self.sources_advisors_screen = SourcesAdvisorsScreen(self, self.settings)
+        self.details_screen = DetailsScreen(self, self.settings)
+        self.compile_screen = CompileScreen(self, self.settings)
+        # Scan screen is created last -- it kicks off scanning immediately,
+        # and by then the screens it can hand off to already exist.
         self.scan_screen = ScanScreen(self, self.settings)
-        self.template_editor_screen = TemplateEditorScreen(self, self.settings)
-        self.assemble_screen = AssembleScreen(self, self.settings)
-        
+
         self.stack.addWidget(self.scan_screen)
-        self.stack.addWidget(self.template_editor_screen)
-        self.stack.addWidget(self.assemble_screen)
-        
-        # layout.addWidget(self.assemble_button, 4, 1,)
-        
+        self.stack.addWidget(self.sources_advisors_screen)
+        self.stack.addWidget(self.details_screen)
+        self.stack.addWidget(self.compile_screen)
+
         self.setCentralWidget(self.stack)
-    
-    def disable_actions(self):
-        self.assemble_button.setEnabled(self.assemble_button.isEnabled() != True)
+
+    def restart(self):
+        self.scan_results = None
+        self.client_name = ""
+        self.target_date = None
+        self.enrolled = False
+
+        self.sources_advisors_screen.reset()
+        self.details_screen.reset()
+        self.compile_screen.reset()
+
+        self.stack.setCurrentWidget(self.scan_screen)
+        self.scan_screen.scan_pdf(refresh=False)
