@@ -1,0 +1,76 @@
+name: Build standalone app
+
+# PyInstaller can't cross-compile -- each platform's build has to actually
+# run on that platform, hence the matrix below rather than a single job.
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: Ressemble-windows
+          - os: ubuntu-latest
+            artifact_name: Ressemble-linux
+          - os: macos-latest # Apple Silicon (arm64)
+            artifact_name: Ressemble-macos-arm64
+          - os: macos-13 # Intel (x86_64)
+            artifact_name: Ressemble-macos-x86_64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-build.txt
+
+      - name: Build with PyInstaller
+        run: pyinstaller packaging/ressemble.spec --noconfirm --clean --distpath dist
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/Ressemble/* -DestinationPath ${{ matrix.artifact_name }}.zip
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd dist
+          zip -r ../${{ matrix.artifact_name }}.zip Ressemble
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent dist/Ressemble.app ${{ matrix.artifact_name }}.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.zip
+          retention-days: 30
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.zip

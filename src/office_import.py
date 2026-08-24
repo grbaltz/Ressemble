@@ -7,16 +7,58 @@ place a Word document enters the pipeline, and it leaves as a PDF.
 """
 from pathlib import Path
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
 import pymupdf
 
 OFFICE_EXTENSIONS = {".doc", ".docx"}
 
-# Metric-compatible with Arial/Helvetica and present on essentially every
-# Linux desktop -- used only when a page's bold text has no embedded
-# regular-weight sibling to fall back on.
-FALLBACK_REGULAR_FONT_FILE = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+# LibreOffice's CLI binary name differs by platform, and on Windows it's
+# often not on PATH even when installed -- check the usual install
+# locations too before giving up.
+_SOFFICE_CANDIDATES = {
+    "win32": [
+        "soffice.exe",
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+    ],
+    "darwin": [
+        "soffice",
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    ],
+}.get(sys.platform, ["soffice"])
+
+# Used only when a page's bold text has no font family that fc-match (or
+# the platform equivalent) can resolve -- a generic, virtually always-
+# present regular-weight sans font to fall back on rather than failing.
+_FALLBACK_FONT_CANDIDATES = {
+    "win32": [r"C:\Windows\Fonts\arial.ttf"],
+    "darwin": ["/Library/Fonts/Arial.ttf", "/System/Library/Fonts/Supplemental/Arial.ttf"],
+}.get(sys.platform, [
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+])
+
+
+def _find_fallback_font():
+    for candidate in _FALLBACK_FONT_CANDIDATES:
+        if Path(candidate).is_file():
+            return candidate
+    return None
+
+
+FALLBACK_REGULAR_FONT_FILE = _find_fallback_font()
+
+
+def _find_soffice():
+    for candidate in _SOFFICE_CANDIDATES:
+        if shutil.which(candidate):
+            return candidate
+        if Path(candidate).is_file():
+            return candidate
+    return None
 
 
 def is_office_document(path):
@@ -28,9 +70,16 @@ def convert_to_pdf(source_path, out_dir=None):
     out_dir = Path(out_dir) if out_dir else Path(tempfile.mkdtemp(prefix="office_convert_"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    soffice = _find_soffice()
+    if not soffice:
+        raise RuntimeError(
+            "LibreOffice (soffice) is required to import a .doc/.docx EMX file but "
+            "wasn't found. Install LibreOffice, or provide the EMX source as a PDF instead."
+        )
+
     result = subprocess.run(
         [
-            "soffice", "--headless", "--norestore",
+            soffice, "--headless", "--norestore",
             "--convert-to", "pdf", "--outdir", str(out_dir), str(source_path),
         ],
         capture_output=True, text=True, timeout=120,
@@ -79,6 +128,12 @@ def _resolve_regular_font_file(family):
             return path
     except (subprocess.SubprocessError, OSError):
         pass
+
+    if not FALLBACK_REGULAR_FONT_FILE:
+        raise RuntimeError(
+            "No regular-weight font could be found to debold page 1 with -- "
+            f"neither fc-match resolved '{family}' nor any of the built-in fallback fonts exist on this system."
+        )
     return FALLBACK_REGULAR_FONT_FILE
 
 

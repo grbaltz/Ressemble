@@ -8,18 +8,18 @@ import re
 import tempfile
 import pymupdf
 from datetime import date, timedelta
+from src.paths import (
+    PAGES_CONFIG_PATH,
+    TEMPLATE_CONFIG_PATH,
+    BASE_DATA_PATH,
+    ADVISORS_PATH,
+    TEAR_SHEETS_PATH,
+    EXPORT_PATH,
+    FONTS_DIR,
+)
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-
-PAGES_CONFIG_PATH = REPO_ROOT / "src" / "pages.json"
-TEMPLATE_CONFIG_PATH = REPO_ROOT / "src" / "template.json"
-BASE_DATA_PATH = REPO_ROOT / "src" / "import" / "split_pages"
-ADVISORS_PATH = REPO_ROOT / "src" / "import" / "advisors"
-TEAR_SHEETS_PATH = REPO_ROOT / "src" / "import" / "tear_sheets"
-EXPORT_PATH = REPO_ROOT / "src" / "export"
-
-AVENIR_BLACK_FONT_FILE = str(REPO_ROOT / "src" / "fonts" / "Avenir Black.ttf")
-TIMES_NEW_ROMAN_FONT_FILE = str(REPO_ROOT / "src" / "fonts" / "Times New Roman.ttf")
+AVENIR_BLACK_FONT_FILE = str(FONTS_DIR / "Avenir Black.ttf")
+TIMES_NEW_ROMAN_FONT_FILE = str(FONTS_DIR / "Times New Roman.ttf")
 
 MODEL_PATTERN = re.compile(r"Model:\s*(.+)")
 

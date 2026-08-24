@@ -1,12 +1,12 @@
 import pymupdf
 from pathlib import Path
+from src.paths import BASE_DATA_PATH
 
 class PDFReader:
-    
+
     def __init__(self, pdf_path):
-        repo_root = Path(__file__).resolve().parent.parent
         self.pdf_path = Path(pdf_path)
-        self.import_path = repo_root / "src" / "import" / "split_pages"
+        self.import_path = BASE_DATA_PATH
         self.import_path.mkdir(parents=True, exist_ok=True)
 
     def get_text(self):

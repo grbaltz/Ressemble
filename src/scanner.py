@@ -7,14 +7,9 @@ from collections import Counter
 from pathlib import Path
 from src.pdf_reader import PDFReader
 from src.office_import import prepare_emx_source
+from src.paths import PAGES_CONFIG_PATH, TEMPLATE_CONFIG_PATH, BASE_DATA_PATH, ADVISORS_PATH
 from rapidfuzz import fuzz
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-
-PAGES_CONFIG_PATH = REPO_ROOT / "src" / "pages.json"
-TEMPLATE_CONFIG_PATH = REPO_ROOT / "src" / "template.json"
-BASE_DATA_PATH = REPO_ROOT / "src" / "import" / "split_pages"
-ADVISORS_PATH = REPO_ROOT / "src" / "import" / "advisors"
 MINIMUM_MATCH_SCORE = 95
 IMAGE_MATCH_SCORE = 90   # slightly looser than text match, since avg-hash is coarser
 IMAGE_HASH_SIZE = 16     # render to a 16x16 grayscale grid -> 256-bit hash

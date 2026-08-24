@@ -6,8 +6,7 @@ from gui.workers.scan_worker import ScanWorker
 from gui.dialogs.label_dialog import LabelDialog
 from pathlib import Path
 import json
-
-TEMPLATE_CONFIG_PATH = Path(__file__).resolve().parent.parent.parent / "src" / "template.json"
+from src.paths import TEMPLATE_CONFIG_PATH
 
 class ScanScreen(WizardScreen):
     def __init__(self, main_window, settings):
