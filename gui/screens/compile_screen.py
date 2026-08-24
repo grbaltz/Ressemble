@@ -111,6 +111,7 @@ class CompileScreen(WizardScreen):
             client_name=self.main_window.client_name,
             enrolled=self.main_window.enrolled,
             target_date=self.main_window.target_date,
+            include_page_numbers=self.main_window.include_page_numbers,
         )
 
         self.worker.moveToThread(self.thread)

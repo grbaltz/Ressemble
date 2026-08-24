@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV /home/grbaltz/Development/YearReportCompiler/pymupdf-venv
+set -gx VIRTUAL_ENV /home/grbaltz/Development/Ressemble/pymupdf-venv
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/"bin $PATH

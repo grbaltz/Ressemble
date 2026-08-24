@@ -1,4 +1,4 @@
-#!/home/grbaltz/Development/YearReportCompiler/pymupdf-venv/bin/python3
+#!/home/grbaltz/Development/Ressemble/pymupdf-venv/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys

@@ -11,13 +11,14 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("Rebalance", "Ressemble")
 
         self.setWindowTitle("Ressemble")
-        self.resize(760, 560)
+        self.resize(700, 760)
 
         # Shared state, populated as the wizard progresses.
         self.scan_results = None
         self.client_name = ""
         self.target_date = None
         self.enrolled = False
+        self.include_page_numbers = True
 
         self.stack = QStackedWidget()
 
@@ -40,6 +41,7 @@ class MainWindow(QMainWindow):
         self.client_name = ""
         self.target_date = None
         self.enrolled = False
+        self.include_page_numbers = True
 
         self.sources_advisors_screen.reset()
         self.details_screen.reset()

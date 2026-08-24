@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import (
+    QWidget,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -7,6 +8,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QVBoxLayout,
     QHBoxLayout,
+    QSizePolicy,
 )
 from PySide6.QtCore import Qt, Signal
 from gui.widgets.wizard_screen import WizardScreen
@@ -83,7 +85,7 @@ class SourcesAdvisorsScreen(WizardScreen):
 
         self.advisor_list = QListWidget()
         self.advisor_list.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.advisor_list.setFixedHeight(180)
+        self.advisor_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         for advisor in ADVISOR_OPTIONS:
             item = QListWidgetItem(advisor)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -92,34 +94,44 @@ class SourcesAdvisorsScreen(WizardScreen):
         self.advisor_list.itemChanged.connect(lambda _: self._validate())
         container.addWidget(self.advisor_list)
 
+        # QListWidget's sizeHint() is a fixed default, not content-driven --
+        # it doesn't grow with item count, it just relies on its scrollbar
+        # for overflow. Pin the height to exactly what all rows need instead.
+        row_height = self.advisor_list.sizeHintForRow(0)
+        frame = 2 * self.advisor_list.frameWidth()
+        self.advisor_list.setFixedHeight(row_height * self.advisor_list.count() + frame)
+
         return self._wrap(container)
 
     def _wrap(self, layout):
-        from PySide6.QtWidgets import QWidget
         widget = QWidget()
         widget.setLayout(layout)
         return widget
 
     def _choose_emx(self):
-        filename = self._browse("EMX")
+        # A .doc/.docx EMX source gets converted to PDF (and debolded on
+        # page 1) once sources are handed off -- see
+        # src/office_import.py:prepare_emx_source, called from
+        # src/scanner.py:request_source_files.
+        filename = self._browse("EMX", "EMX Files (*.pdf *.doc *.docx)")
         if filename:
             self._emx_path = filename
             self.emx_field.setText(filename)
             self._validate()
 
     def _choose_bd(self):
-        filename = self._browse("Black Diamond")
+        filename = self._browse("Black Diamond", "PDF Files (*.pdf)")
         if filename:
             self._bd_path = filename
             self.bd_field.setText(filename)
             self._validate()
 
-    def _browse(self, label):
+    def _browse(self, label, file_filter):
         filename, _ = QFileDialog.getOpenFileName(
             self,
-            f"Select {label} PDF",
+            f"Select {label} File",
             self.settings.value("lastReplacementDir"),
-            "PDF Files (*.pdf)"
+            file_filter
         )
         if filename:
             self.settings.setValue("lastReplacementDir", str(Path(filename).parent))

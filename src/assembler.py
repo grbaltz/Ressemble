@@ -31,7 +31,7 @@ PAGE_NUMBER_COLOR = 7698041
 PAGE_NUMBER_SIZE = 10
 PAGE_NUMBER_MARGIN = 36
 
-def assemble_report(log, progress, advisors_filename, client_name, enrolled, target_date=None):
+def assemble_report(log, progress, advisors_filename, client_name, enrolled, target_date=None, include_page_numbers=True):
     # select_advisor_file(log, request_advisors)
     print("assemble")
 
@@ -186,7 +186,8 @@ def assemble_report(log, progress, advisors_filename, client_name, enrolled, tar
     print(f"Report pages: {report_pages}")
     try:
         report_path = merge_pdfs(report_pages, f"{EXPORT_PATH}/report_{date.today()}.pdf")
-        add_page_numbers(report_path, skip_pages=1)
+        if include_page_numbers:
+            add_page_numbers(report_path, skip_pages=1)
     finally:
         for temp_file in temp_files:
             Path(temp_file).unlink(missing_ok=True)
@@ -204,7 +205,9 @@ def add_page_numbers(pdf_path, skip_pages=1):
         page = doc[page_num]
         page.insert_font(fontname=fontname, fontfile=PAGE_NUMBER_FONT_FILE)
 
-        label = str(page_num - skip_pages + 1)
+        # The cover (page_num 0) counts as page "1" even though it's
+        # unlabeled, so labels are just the 1-indexed page number.
+        label = str(page_num + 1)
         text_width = font.text_length(label, fontsize=PAGE_NUMBER_SIZE)
 
         x = page.rect.width - PAGE_NUMBER_MARGIN - text_width

@@ -12,6 +12,7 @@ class DetailsScreen(WizardScreen):
         self.content_layout.addWidget(self._build_client_name())
         self.content_layout.addWidget(self._build_target_date())
         self.content_layout.addWidget(self._build_enrolled())
+        self.content_layout.addWidget(self._build_page_numbers())
 
         self.set_primary("Compile Report", enabled=False, callback=self._on_continue)
 
@@ -80,6 +81,25 @@ class DetailsScreen(WizardScreen):
         widget.setLayout(layout)
         return widget
 
+    def _build_page_numbers(self):
+        from PySide6.QtWidgets import QWidget
+        widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(6)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        label = QLabel("PAGE NUMBERS")
+        label.setProperty("class", "section")
+        layout.addWidget(label)
+
+        self.page_numbers_checkbox = QCheckBox("Automatically number pages")
+        self.page_numbers_checkbox.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.page_numbers_checkbox.setChecked(True)
+        layout.addWidget(self.page_numbers_checkbox)
+
+        widget.setLayout(layout)
+        return widget
+
     def _on_target_date_toggled(self, checked):
         self.target_date_field.setEnabled(checked)
 
@@ -94,6 +114,7 @@ class DetailsScreen(WizardScreen):
     def _on_continue(self):
         self.main_window.client_name = self.client_name_field.text().strip()
         self.main_window.enrolled = self.enrolled_checkbox.isChecked()
+        self.main_window.include_page_numbers = self.page_numbers_checkbox.isChecked()
 
         if self.use_target_date.isChecked():
             self.main_window.target_date = self.target_date_field.date().toPython()
@@ -107,6 +128,7 @@ class DetailsScreen(WizardScreen):
         self.client_name_field.clear()
         self.use_target_date.setChecked(False)
         self.enrolled_checkbox.setChecked(False)
+        self.page_numbers_checkbox.setChecked(True)
         self._set_default_date()
 
     def showEvent(self, event):

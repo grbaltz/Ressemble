@@ -7,12 +7,13 @@ class AssembleWorker(QObject):
     log = Signal(str)
     progress = Signal(int, int) # current, total
 
-    def __init__(self, matched_pages, sources, advisors_file, client_name, enrolled, target_date=None):
+    def __init__(self, matched_pages, sources, advisors_file, client_name, enrolled, target_date=None, include_page_numbers=True):
         super().__init__()
         self._advisors_file = advisors_file
         self._client_name = client_name
         self._enrolled = enrolled
         self._target_date = target_date
+        self._include_page_numbers = include_page_numbers
         self._wait = threading.Event()
 
     def run(self):
@@ -27,7 +28,8 @@ class AssembleWorker(QObject):
                 advisors_filename=self._advisors_file,
                 client_name=self._client_name,
                 enrolled=self._enrolled,
-                target_date=self._target_date
+                target_date=self._target_date,
+                include_page_numbers=self._include_page_numbers
             )
         finally:
             self.finished.emit(report_path)

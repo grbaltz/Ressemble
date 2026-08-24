@@ -6,6 +6,7 @@ import shutil
 from collections import Counter
 from pathlib import Path
 from src.pdf_reader import PDFReader
+from src.office_import import prepare_emx_source
 from rapidfuzz import fuzz
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -147,6 +148,10 @@ def request_source_files(log, request_sources):
 
     emx_pdf, blackdiamond_pdf = request_sources()
 
+    if Path(emx_pdf).suffix.lower() in (".doc", ".docx"):
+        log("Converting EMX Word document to PDF and removing bold styling from page 1…")
+        emx_pdf = prepare_emx_source(emx_pdf)
+
     with Path(emx_pdf) as emx_dir, Path(blackdiamond_pdf) as blackdiamond_dir:
         print(f"emx_dir: {emx_dir.stem}, bd_dir: {blackdiamond_dir.stem}")
         return {
@@ -195,11 +200,33 @@ def fingerprint_page(page, filename):
 
     # bd automatic
 
-    # enroll/enrolled plan360
+    # portfolio title pages: three template pages share the "Portfolio &
+    # Allocation" heading, distinguished by subtitle. assemble_report() keeps
+    # either the generic page alone (single account) or both split pages
+    # together and drops the generic one (multiple accounts) -- see the
+    # portfolioAllAccounts/portfolioIndividualAccount/portfolioGeneric
+    # handling in assembler.py.
+    if re.search(r"all accounts.*combined", stabilized, re.IGNORECASE):
+        slot = "portfolioAllAccounts"
+
+    if re.search(r"by individual account", stabilized, re.IGNORECASE):
+        slot = "portfolioIndividualAccount"
+
+    if re.search(r"portfolio\s*&?\s*allocation", stabilized, re.IGNORECASE) and not re.search(r"all accounts|individual account", stabilized, re.IGNORECASE):
+        slot = "portfolioGeneric"
+
+    # enroll/enrolled plan360: two variant pages sharing one slot value --
+    # assemble_report() tells them apart by template order (1st = pitch,
+    # 2nd = enrolled confirmation), not by slot name, so both map here.
+    if re.search(r"introducing rebalance 360.s newest service|enrollment required", stabilized, re.IGNORECASE):
+        slot = "view360"
+
+    if re.search(r"congratulations on enrolling", stabilized, re.IGNORECASE):
+        slot = "view360"
 
     # bd header page
 
-    # 
+    #
 
     image_hash = None
 
