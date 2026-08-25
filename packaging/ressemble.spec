@@ -7,6 +7,7 @@
 #   pyinstaller packaging/ressemble.spec --noconfirm --clean --distpath dist
 #
 import sys
+import sysconfig
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
@@ -28,6 +29,19 @@ for pkg in ("PySide6", "pymupdf", "rapidfuzz"):
     datas += pkg_datas
     binaries += pkg_binaries
     hiddenimports += pkg_hiddenimports
+
+# Belt-and-suspenders for stdlib C extensions (_struct, _socket, etc.):
+# PyInstaller's own binary-dependency scanner has been observed to miss
+# some of these on certain platform Python builds (seen in practice as
+# "No module named '_struct'" at runtime on macOS), even though they're
+# core stdlib modules that should always be bundled. Explicitly copying
+# every compiled extension already loaded by *this* interpreter's
+# lib-dynload directory sidesteps whatever heuristic is missing them.
+lib_dynload = Path(sysconfig.get_config_var("DESTLIB") or sysconfig.get_path("stdlib")) / "lib-dynload"
+if lib_dynload.is_dir():
+    for ext_file in lib_dynload.iterdir():
+        if ext_file.is_file():
+            binaries.append((str(ext_file), "lib-dynload"))
 
 a = Analysis(
     [str(REPO_ROOT / "main.py")],
