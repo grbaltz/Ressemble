@@ -63,6 +63,26 @@ jobs:
         # consistent identity and doesn't require a paid Developer ID.
         run: codesign --force --deep --sign - dist/Ressemble.app
 
+      - name: Diagnose struct extension (macOS)
+        if: runner.os == 'macOS'
+        # Temporary: the last two fix attempts (raw lib-dynload copy, then
+        # hiddenimports) both failed to resolve "_struct" at runtime on a
+        # real Mac, so instead of guessing a third time, capture ground
+        # truth from this runner (a real Mac) directly: whether _struct is
+        # even a dynamic extension for this Python build, what actually
+        # landed in the bundle, and the real dyld-level failure when the
+        # frozen binary is launched exactly like the user launches it.
+        run: |
+          echo "--- is _struct a builtin or a dynamic extension for this interpreter? ---"
+          python3 -c "import sys; print('builtin:', '_struct' in sys.builtin_module_names)"
+          python3 -c "import _struct; print('file:', getattr(_struct, '__file__', '<no __file__ -- builtin>'))"
+          echo "--- files matching *struct* in the frozen bundle ---"
+          find dist/Ressemble.app -iname '*struct*' -exec ls -la {} \;
+          echo "--- codesign identity on main binary ---"
+          codesign -dvvv dist/Ressemble.app/Contents/MacOS/Ressemble 2>&1 || true
+          echo "--- direct launch, traced, exactly as run from Terminal ---"
+          DYLD_PRINT_LIBRARIES=1 DYLD_PRINT_LIBRARIES_POST_LAUNCH=1 dist/Ressemble.app/Contents/MacOS/Ressemble 2>&1 | tail -200 || true
+
       - name: Package (macOS)
         if: runner.os == 'macOS'
         # `ditto -c -k --keepParent` was flattening Ressemble.app instead of
