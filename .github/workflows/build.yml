@@ -81,7 +81,21 @@ jobs:
           echo "--- codesign identity on main binary ---"
           codesign -dvvv dist/Ressemble.app/Contents/MacOS/Ressemble 2>&1 || true
           echo "--- direct launch, traced, exactly as run from Terminal ---"
-          DYLD_PRINT_LIBRARIES=1 DYLD_PRINT_LIBRARIES_POST_LAUNCH=1 dist/Ressemble.app/Contents/MacOS/Ressemble 2>&1 | tail -200 || true
+          # No `timeout` binary on macOS runners by default -- background it,
+          # kill it after 10s if it's still alive (this is a GUI app, so if
+          # struct actually loads it'll sit in its event loop instead of
+          # crashing, and we don't want that to hang the job).
+          DYLD_PRINT_LIBRARIES=1 DYLD_PRINT_LIBRARIES_POST_LAUNCH=1 dist/Ressemble.app/Contents/MacOS/Ressemble > /tmp/launch.log 2>&1 &
+          pid=$!
+          sleep 10
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "(still running after 10s -- app launched without crashing; killing)"
+            kill -9 "$pid" 2>/dev/null || true
+          else
+            wait "$pid"
+            echo "(exited with code $?)"
+          fi
+          tail -200 /tmp/launch.log
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
