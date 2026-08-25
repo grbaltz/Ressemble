@@ -50,6 +50,19 @@ jobs:
           cd dist
           zip -r ../${{ matrix.artifact_name }}.zip Ressemble
 
+      - name: Re-sign bundle (macOS)
+        if: runner.os == 'macOS'
+        # python.org's official macOS Python (what actions/setup-python uses)
+        # ships its compiled stdlib extensions pre-signed with Apple's own
+        # Developer ID. Once PyInstaller repackages them into a new, unsigned
+        # .app, macOS library validation can refuse to load a nested binary
+        # whose signature identity doesn't match the host app's -- Python's
+        # import machinery then just reports it as "module not found" (seen
+        # in practice: _struct failing despite the .so being present in the
+        # bundle). An ad-hoc deep re-sign gives every nested binary a
+        # consistent identity and doesn't require a paid Developer ID.
+        run: codesign --force --deep --sign - dist/Ressemble.app
+
       - name: Package (macOS)
         if: runner.os == 'macOS'
         # `ditto -c -k --keepParent` was flattening Ressemble.app instead of
