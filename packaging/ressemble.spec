@@ -7,7 +7,6 @@
 #   pyinstaller packaging/ressemble.spec --noconfirm --clean --distpath dist
 #
 import sys
-import sysconfig
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
@@ -30,18 +29,16 @@ for pkg in ("PySide6", "pymupdf", "rapidfuzz"):
     binaries += pkg_binaries
     hiddenimports += pkg_hiddenimports
 
-# Belt-and-suspenders for stdlib C extensions (_struct, _socket, etc.):
-# PyInstaller's own binary-dependency scanner has been observed to miss
-# some of these on certain platform Python builds (seen in practice as
-# "No module named '_struct'" at runtime on macOS), even though they're
-# core stdlib modules that should always be bundled. Explicitly copying
-# every compiled extension already loaded by *this* interpreter's
-# lib-dynload directory sidesteps whatever heuristic is missing them.
-lib_dynload = Path(sysconfig.get_config_var("DESTLIB") or sysconfig.get_path("stdlib")) / "lib-dynload"
-if lib_dynload.is_dir():
-    for ext_file in lib_dynload.iterdir():
-        if ext_file.is_file():
-            binaries.append((str(ext_file), "lib-dynload"))
+# PyInstaller's Analysis has been observed to miss some stdlib C
+# extensions on certain macOS Python builds ("No module named '_struct'"
+# at runtime, despite struct being used constantly). Forcing them through
+# hiddenimports routes them through PyInstaller's real module-analysis
+# path, which registers them properly in the frozen import lookup table --
+# unlike just copying the .so file onto disk (tried first: the file ended
+# up present in the bundle but still wasn't importable, since the frozen
+# importer consults its own build-time table rather than scanning
+# directories at runtime).
+hiddenimports += ["struct", "_struct"]
 
 a = Analysis(
     [str(REPO_ROOT / "main.py")],
