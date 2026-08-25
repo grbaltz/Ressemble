@@ -106,6 +106,43 @@ jobs:
         # there's no Mac available to test the real ditto invocation on.
         run: python3 -c "import shutil; shutil.make_archive('${{ matrix.artifact_name }}', 'zip', root_dir='dist', base_dir='Ressemble.app')"
 
+      - name: Diagnose post-zip bundle integrity (macOS)
+        if: runner.os == 'macOS'
+        # The pre-zip app launches fine (see the diagnostic step above), so
+        # if the user's downloaded copy still fails, the zip round-trip
+        # itself -- shutil.make_archive, which uses zipfile and does NOT
+        # preserve symlinks (it dereferences them into plain files) -- is
+        # the prime suspect. PySide6/Qt ship real .framework bundles full of
+        # the Versions/Current symlink pattern; dereferencing those would
+        # change the on-disk bytes/layout of everything nested under them
+        # relative to what was code-signed, which macOS's mandatory
+        # code-signing enforcement (unconditional on Apple Silicon) would
+        # then refuse to load. Re-extract the exact artifact zip into a
+        # fresh directory and re-run the same checks against that copy.
+        run: |
+          echo "--- verifying pre-zip bundle (should pass) ---"
+          codesign --verify --deep --strict --verbose=4 dist/Ressemble.app 2>&1 || true
+          echo "--- unzipping the actual artifact into a fresh dir ---"
+          mkdir -p /tmp/extracted
+          unzip -q "${{ matrix.artifact_name }}.zip" -d /tmp/extracted
+          echo "--- symlink count: pre-zip vs post-unzip ---"
+          echo "pre-zip:  $(find dist/Ressemble.app -type l | wc -l)"
+          echo "post-zip: $(find /tmp/extracted/Ressemble.app -type l | wc -l)"
+          echo "--- verifying post-zip bundle ---"
+          codesign --verify --deep --strict --verbose=4 /tmp/extracted/Ressemble.app 2>&1 || true
+          echo "--- launching the post-zip copy, traced ---"
+          DYLD_PRINT_LIBRARIES=1 DYLD_PRINT_LIBRARIES_POST_LAUNCH=1 /tmp/extracted/Ressemble.app/Contents/MacOS/Ressemble > /tmp/launch2.log 2>&1 &
+          pid=$!
+          sleep 10
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "(still running after 10s -- launched without crashing; killing)"
+            kill -9 "$pid" 2>/dev/null || true
+          else
+            wait "$pid"
+            echo "(exited with code $?)"
+          fi
+          tail -200 /tmp/launch2.log
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
