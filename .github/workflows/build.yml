@@ -103,12 +103,22 @@ jobs:
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
-        # `ditto -c -k --keepParent` was flattening Ressemble.app instead of
-        # keeping it as a single top-level entry. shutil.make_archive with
-        # root_dir/base_dir is guaranteed to nest everything under
-        # Ressemble.app/ -- verified locally against a mock .app tree since
-        # there's no Mac available to test the real ditto invocation on.
-        run: python3 -c "import shutil; shutil.make_archive('${{ matrix.artifact_name }}', 'zip', root_dir='dist', base_dir='Ressemble.app')"
+        # shutil.make_archive's 'zip' format (zipfile/os.walk under the
+        # hood) does not preserve symlinks -- confirmed on a real Mac via
+        # the diagnostic step below: it took the bundle from 1994 symlinks
+        # to 0, which is what broke Qt's .framework layout and PyInstaller's
+        # own Contents/MacOS <-> Contents/Frameworks symlink structure,
+        # surfacing as "_struct" failing to load at runtime. ditto is
+        # Apple's own archiving tool and preserves symlinks, resource
+        # forks, and code signatures correctly; running it from inside
+        # dist/ (rather than passing "dist/Ressemble.app") keeps the
+        # recorded path as just "Ressemble.app", which is what --keepParent
+        # needs to nest it as a single top-level entry instead of double
+        # nesting under "dist/".
+        run: |
+          cd dist
+          ditto -c -k --keepParent Ressemble.app "../${{ matrix.artifact_name }}.zip"
+          cd ..
 
       - name: Diagnose post-zip bundle integrity (macOS)
         if: runner.os == 'macOS'
