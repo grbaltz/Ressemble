@@ -85,6 +85,10 @@ jobs:
           # kill it after 10s if it's still alive (this is a GUI app, so if
           # struct actually loads it'll sit in its event loop instead of
           # crashing, and we don't want that to hang the job).
+          # `run:` steps execute under `bash -e`; if the app crashes, `wait`
+          # returns its real exit status and set -e would abort before the
+          # trailing `tail` ever prints the log. Disable it for this block.
+          set +e
           DYLD_PRINT_LIBRARIES=1 DYLD_PRINT_LIBRARIES_POST_LAUNCH=1 dist/Ressemble.app/Contents/MacOS/Ressemble > /tmp/launch.log 2>&1 &
           pid=$!
           sleep 10
@@ -131,6 +135,11 @@ jobs:
           echo "--- verifying post-zip bundle ---"
           codesign --verify --deep --strict --verbose=4 /tmp/extracted/Ressemble.app 2>&1 || true
           echo "--- launching the post-zip copy, traced ---"
+          # `run:` steps execute under `bash -e`, and `wait` returns the
+          # child's real exit status -- if the app crashed (which is exactly
+          # what we're trying to observe), `set -e` aborts the script right
+          # there and we never reach `tail`. Disable it for this block.
+          set +e
           DYLD_PRINT_LIBRARIES=1 DYLD_PRINT_LIBRARIES_POST_LAUNCH=1 /tmp/extracted/Ressemble.app/Contents/MacOS/Ressemble > /tmp/launch2.log 2>&1 &
           pid=$!
           sleep 10
