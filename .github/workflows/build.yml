@@ -63,54 +63,17 @@ jobs:
         # consistent identity and doesn't require a paid Developer ID.
         run: codesign --force --deep --sign - dist/Ressemble.app
 
-      - name: Diagnose struct extension (macOS)
-        if: runner.os == 'macOS'
-        # Temporary: the last two fix attempts (raw lib-dynload copy, then
-        # hiddenimports) both failed to resolve "_struct" at runtime on a
-        # real Mac, so instead of guessing a third time, capture ground
-        # truth from this runner (a real Mac) directly: whether _struct is
-        # even a dynamic extension for this Python build, what actually
-        # landed in the bundle, and the real dyld-level failure when the
-        # frozen binary is launched exactly like the user launches it.
-        run: |
-          echo "--- is _struct a builtin or a dynamic extension for this interpreter? ---"
-          python3 -c "import sys; print('builtin:', '_struct' in sys.builtin_module_names)"
-          python3 -c "import _struct; print('file:', getattr(_struct, '__file__', '<no __file__ -- builtin>'))"
-          echo "--- files matching *struct* in the frozen bundle ---"
-          find dist/Ressemble.app -iname '*struct*' -exec ls -la {} \;
-          echo "--- codesign identity on main binary ---"
-          codesign -dvvv dist/Ressemble.app/Contents/MacOS/Ressemble 2>&1 || true
-          echo "--- direct launch, traced, exactly as run from Terminal ---"
-          # No `timeout` binary on macOS runners by default -- background it,
-          # kill it after 10s if it's still alive (this is a GUI app, so if
-          # struct actually loads it'll sit in its event loop instead of
-          # crashing, and we don't want that to hang the job).
-          # `run:` steps execute under `bash -e`; if the app crashes, `wait`
-          # returns its real exit status and set -e would abort before the
-          # trailing `tail` ever prints the log. Disable it for this block.
-          set +e
-          DYLD_PRINT_LIBRARIES=1 DYLD_PRINT_LIBRARIES_POST_LAUNCH=1 dist/Ressemble.app/Contents/MacOS/Ressemble > /tmp/launch.log 2>&1 &
-          pid=$!
-          sleep 10
-          if kill -0 "$pid" 2>/dev/null; then
-            echo "(still running after 10s -- app launched without crashing; killing)"
-            kill -9 "$pid" 2>/dev/null || true
-          else
-            wait "$pid"
-            echo "(exited with code $?)"
-          fi
-          tail -200 /tmp/launch.log
-
       - name: Package (macOS)
         if: runner.os == 'macOS'
         # shutil.make_archive's 'zip' format (zipfile/os.walk under the
-        # hood) does not preserve symlinks -- confirmed on a real Mac via
-        # the diagnostic step below: it took the bundle from 1994 symlinks
-        # to 0, which is what broke Qt's .framework layout and PyInstaller's
-        # own Contents/MacOS <-> Contents/Frameworks symlink structure,
-        # surfacing as "_struct" failing to load at runtime. ditto is
-        # Apple's own archiving tool and preserves symlinks, resource
-        # forks, and code signatures correctly; running it from inside
+        # hood) does not preserve symlinks -- confirmed on a real Mac via a
+        # temporary CI diagnostic: it took the bundle from 1994 symlinks to
+        # 0, which broke Qt's .framework layout and PyInstaller's own
+        # Contents/MacOS <-> Contents/Frameworks symlink structure,
+        # surfacing as "_struct" failing to load at runtime even though the
+        # pre-zip build was always fine. ditto is Apple's own archiving
+        # tool and preserves symlinks, resource forks, and code signatures
+        # correctly; running it from inside
         # dist/ (rather than passing "dist/Ressemble.app") keeps the
         # recorded path as just "Ressemble.app", which is what --keepParent
         # needs to nest it as a single top-level entry instead of double
@@ -119,48 +82,6 @@ jobs:
           cd dist
           ditto -c -k --keepParent Ressemble.app "../${{ matrix.artifact_name }}.zip"
           cd ..
-
-      - name: Diagnose post-zip bundle integrity (macOS)
-        if: runner.os == 'macOS'
-        # The pre-zip app launches fine (see the diagnostic step above), so
-        # if the user's downloaded copy still fails, the zip round-trip
-        # itself -- shutil.make_archive, which uses zipfile and does NOT
-        # preserve symlinks (it dereferences them into plain files) -- is
-        # the prime suspect. PySide6/Qt ship real .framework bundles full of
-        # the Versions/Current symlink pattern; dereferencing those would
-        # change the on-disk bytes/layout of everything nested under them
-        # relative to what was code-signed, which macOS's mandatory
-        # code-signing enforcement (unconditional on Apple Silicon) would
-        # then refuse to load. Re-extract the exact artifact zip into a
-        # fresh directory and re-run the same checks against that copy.
-        run: |
-          echo "--- verifying pre-zip bundle (should pass) ---"
-          codesign --verify --deep --strict --verbose=4 dist/Ressemble.app 2>&1 || true
-          echo "--- unzipping the actual artifact into a fresh dir ---"
-          mkdir -p /tmp/extracted
-          unzip -q "${{ matrix.artifact_name }}.zip" -d /tmp/extracted
-          echo "--- symlink count: pre-zip vs post-unzip ---"
-          echo "pre-zip:  $(find dist/Ressemble.app -type l | wc -l)"
-          echo "post-zip: $(find /tmp/extracted/Ressemble.app -type l | wc -l)"
-          echo "--- verifying post-zip bundle ---"
-          codesign --verify --deep --strict --verbose=4 /tmp/extracted/Ressemble.app 2>&1 || true
-          echo "--- launching the post-zip copy, traced ---"
-          # `run:` steps execute under `bash -e`, and `wait` returns the
-          # child's real exit status -- if the app crashed (which is exactly
-          # what we're trying to observe), `set -e` aborts the script right
-          # there and we never reach `tail`. Disable it for this block.
-          set +e
-          DYLD_PRINT_LIBRARIES=1 DYLD_PRINT_LIBRARIES_POST_LAUNCH=1 /tmp/extracted/Ressemble.app/Contents/MacOS/Ressemble > /tmp/launch2.log 2>&1 &
-          pid=$!
-          sleep 10
-          if kill -0 "$pid" 2>/dev/null; then
-            echo "(still running after 10s -- launched without crashing; killing)"
-            kill -9 "$pid" 2>/dev/null || true
-          else
-            wait "$pid"
-            echo "(exited with code $?)"
-          fi
-          tail -200 /tmp/launch2.log
 
       - uses: actions/upload-artifact@v4
         with:
