@@ -47,6 +47,7 @@ BUNDLE_ROOT = _bundle_root()
 DATA_ROOT = _data_root()
 
 FONTS_DIR = BUNDLE_ROOT / "src" / "fonts"
+ICON_PATH = BUNDLE_ROOT / "icon.webp"
 
 PAGES_CONFIG_PATH = DATA_ROOT / "pages.json"
 TEMPLATE_CONFIG_PATH = DATA_ROOT / "template.json"

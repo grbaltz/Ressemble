@@ -18,6 +18,11 @@ datas = [
     (str(REPO_ROOT / "src" / "fonts" / "Avenir Black.ttf"), "src/fonts"),
     (str(REPO_ROOT / "src" / "fonts" / "Times New Roman.ttf"), "src/fonts"),
     (str(REPO_ROOT / "src" / "fonts" / "LiberationSans-Regular.ttf"), "src/fonts"),
+    # For the in-app window/taskbar/dock icon (see main.py) -- separate
+    # from icon.ico/icon.icns below, which set the .exe/.app's own icon
+    # (as seen in Explorer/Finder before the app ever runs) and aren't
+    # readable by Qt's QIcon at runtime.
+    (str(REPO_ROOT / "icon.webp"), "."),
 ]
 binaries = []
 hiddenimports = []
@@ -67,6 +72,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
+    icon=str(REPO_ROOT / "packaging" / "icon.ico"),
 )
 
 coll = COLLECT(
@@ -83,4 +89,5 @@ if sys.platform == "darwin":
         coll,
         name="Ressemble.app",
         bundle_identifier="com.rebalance.ressemble",
+        icon=str(REPO_ROOT / "packaging" / "icon.icns"),
     )
