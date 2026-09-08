@@ -5,7 +5,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QProgressBar,
     QTextEdit,
-    QListWidget,
     QListWidgetItem,
     QVBoxLayout,
     QHBoxLayout,
@@ -13,13 +12,16 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread
 from gui.widgets.wizard_screen import WizardScreen
 from gui.widgets.file_drop_line_edit import FileDropLineEdit
+from gui.widgets.checkable_list_widget import CheckableListWidget
 from gui.widgets.collapsible import CollapsibleSection
 from gui.workers.finish_sources_worker import FinishSourcesWorker
-from src.advisors import load_cached_advisors
+from src.advisors import load_cached_advisors, advisor_combo_file
 from pathlib import Path
 
 EMX_EXTENSIONS = {".pdf", ".doc", ".docx"}
 BD_EXTENSIONS = {".pdf"}
+
+NO_COMBO_TOOLTIP = "This Advisor combination page has not been provided"
 
 class SourcesAdvisorsScreen(WizardScreen):
     """The per-report inputs left once the Scan screen has the template
@@ -115,10 +117,10 @@ class SourcesAdvisorsScreen(WizardScreen):
         self.no_advisors_label.setVisible(False)
         container.addWidget(self.no_advisors_label)
 
-        self.advisor_list = QListWidget()
+        self.advisor_list = CheckableListWidget()
         self.advisor_list.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.advisor_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.advisor_list.itemChanged.connect(lambda _: self._validate())
+        self.advisor_list.itemChanged.connect(self._on_advisor_item_changed)
         container.addWidget(self.advisor_list)
 
         widget = QWidget()
@@ -176,6 +178,8 @@ class SourcesAdvisorsScreen(WizardScreen):
             frame = 2 * self.advisor_list.frameWidth()
             self.advisor_list.setFixedHeight(row_height * self.advisor_list.count() + frame)
 
+        self._update_advisor_availability()
+
     def _choose_emx(self):
         # A .doc/.docx EMX source gets converted to PDF (and fully debolded)
         # once sources are handed off -- see
@@ -217,6 +221,39 @@ class SourcesAdvisorsScreen(WizardScreen):
             for i in range(self.advisor_list.count())
             if self.advisor_list.item(i).checkState() == Qt.CheckState.Checked
         ]
+
+    def _on_advisor_item_changed(self, item):
+        self._update_advisor_availability()
+        self._validate()
+
+    def _update_advisor_availability(self):
+        # Guides the user toward combinations that actually have a page
+        # (see src/advisors.py) rather than letting them assemble an
+        # arbitrary set that silently falls back to a placeholder at
+        # report time. The first pick is always free -- there's no page
+        # for a single advisor alone, so nothing would ever be selectable
+        # if that were also constrained.
+        checked = self._selected_advisors()
+
+        # setFlags()/setToolTip() also emit itemChanged in this Qt version,
+        # not just check-state edits -- without blocking, that re-enters
+        # _on_advisor_item_changed -> here, infinitely.
+        self.advisor_list.blockSignals(True)
+        for i in range(self.advisor_list.count()):
+            item = self.advisor_list.item(i)
+
+            if item.checkState() == Qt.CheckState.Checked or not checked:
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEnabled)
+                item.setToolTip("")
+                continue
+
+            if advisor_combo_file(checked + [item.text()]):
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEnabled)
+                item.setToolTip("")
+            else:
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+                item.setToolTip(NO_COMBO_TOOLTIP)
+        self.advisor_list.blockSignals(False)
 
     def _validate(self):
         ready = bool(self._emx_path) and bool(self._bd_path) and len(self._selected_advisors()) > 0

@@ -180,13 +180,37 @@ QListWidget::item {{
     border-radius: 4px;
 }}
 
-QListWidget::item:selected {{
+QListWidget::item:hover {{
     background: {BACKGROUND};
+}}
+
+/* Selected/current (e.g. the row last clicked or checked) needs its own
+   look, distinct from disabled -- reusing the same muted grey for both
+   made an enabled-but-selected row (like one just unchecked) look
+   identical to an actually-disabled one. A border keeps the fill the
+   same as a normal enabled row instead of graying it. */
+QListWidget::item:selected {{
+    background: {SURFACE};
+    color: {TEXT};
+    border: 1px solid {ACCENT};
+}}
+
+QListWidget::item:focus {{
+    background: {SURFACE};
     color: {TEXT};
 }}
 
-QListWidget::item:hover {{
+/* Declared after :selected/:focus so it always wins if a disabled item
+   somehow retains selection/focus. */
+QListWidget::item:disabled {{
     background: {BACKGROUND};
+    color: {MUTED_TEXT};
+    border: none;
+}}
+
+QListWidget::indicator:disabled {{
+    background: {BACKGROUND};
+    border: 1px solid {BORDER};
 }}
 
 QProgressBar {{
