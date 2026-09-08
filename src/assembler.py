@@ -5,6 +5,7 @@ from glob import glob
 import shutil
 import json
 import re
+import sys
 import tempfile
 import pymupdf
 from datetime import date, timedelta
@@ -12,27 +13,73 @@ from src.paths import (
     PAGES_CONFIG_PATH,
     TEMPLATE_CONFIG_PATH,
     BASE_DATA_PATH,
-    ADVISORS_PATH,
     TEAR_SHEETS_PATH,
     EXPORT_PATH,
     FONTS_DIR,
 )
+from src.advisors import advisor_combo_file
 
 AVENIR_BLACK_FONT_FILE = str(FONTS_DIR / "Avenir Black.ttf")
-TIMES_NEW_ROMAN_FONT_FILE = str(FONTS_DIR / "Times New Roman.ttf")
+
+# Windows and macOS both ship the genuine, fully-glyphed Microsoft Times
+# New Roman that a real Word/Office-produced report template was actually
+# set in. The bundled copy (src/fonts/Times New Roman.ttf) is a
+# metric-compatible substitute -- it exists so a system with no real Times
+# New Roman (Linux, mainly) still has something to render the cover date
+# with, but its letterforms don't actually match: verified by comparing a
+# generated cover date against the same text in a real report side by
+# side, same size/position -- the digits and comma are visibly different
+# shapes despite both fonts reporting identical name/metrics. Preferring
+# the genuine system font when it's present avoids that mismatch entirely.
+_SYSTEM_TIMES_NEW_ROMAN_CANDIDATES = {
+    "win32": [r"C:\Windows\Fonts\times.ttf"],
+    "darwin": [
+        "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+        "/Library/Fonts/Times New Roman.ttf",
+    ],
+}.get(sys.platform, [])
+
+
+def _resolve_times_new_roman():
+    for candidate in _SYSTEM_TIMES_NEW_ROMAN_CANDIDATES:
+        if Path(candidate).is_file():
+            return candidate
+    return str(FONTS_DIR / "Times New Roman.ttf")
+
+
+TIMES_NEW_ROMAN_FONT_FILE = _resolve_times_new_roman()
+
+# Same reasoning as Times New Roman above -- prefer the genuine system
+# Arial a real report's page numbers were actually set in, falling back to
+# the bundled Arial-metric-compatible substitute only where no genuine
+# copy exists.
+_SYSTEM_ARIAL_CANDIDATES = {
+    "win32": [r"C:\Windows\Fonts\arial.ttf"],
+    "darwin": [
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial.ttf",
+    ],
+}.get(sys.platform, [])
+
+
+def _resolve_arial():
+    for candidate in _SYSTEM_ARIAL_CANDIDATES:
+        if Path(candidate).is_file():
+            return candidate
+    return str(FONTS_DIR / "LiberationSans-Regular.ttf")
+
 
 MODEL_PATTERN = re.compile(r"Model:\s*(.+)")
 
-# Page-number footer style: reuses the bundled Times New Roman (already
-# needed for the cover date) and the same muted gray used for the cover
-# page's body copy, at a 0.5in margin matching Acrobat's own footer default.
-PAGE_NUMBER_FONT_FILE = TIMES_NEW_ROMAN_FONT_FILE
-PAGE_NUMBER_COLOR = 7698041
-PAGE_NUMBER_SIZE = 10
+# Page-number footer style verified against a real report (Arial, 8pt,
+# solid black) -- rather than the muted-gray Times New Roman previously
+# used here, which didn't match.
+PAGE_NUMBER_FONT_FILE = _resolve_arial()
+PAGE_NUMBER_COLOR = 0
+PAGE_NUMBER_SIZE = 8
 PAGE_NUMBER_MARGIN = 36
 
 def assemble_report(log, progress, advisors_filename, client_name, enrolled, target_date=None, include_page_numbers=True):
-    # select_advisor_file(log, request_advisors)
     print("assemble")
 
     bd_slot = 1
@@ -114,16 +161,19 @@ def assemble_report(log, progress, advisors_filename, client_name, enrolled, tar
             case "advisors":
                 print("Advisors slot")
 
-                path = template.get("advisors_filename")
+                # The user-provided advisors PDF (see src/advisors.py) is
+                # split one page per pre-designed team combination, not one
+                # page per person -- so only an exact combination match has
+                # a real page to insert here.
+                selected_advisors = template.get("selected_advisors") or []
+                advisor_pdf = advisor_combo_file(selected_advisors)
 
-                if not path:
-                    print("no advisors source provided")
+                if not advisor_pdf:
+                    print(f"no advisors page found for combination {selected_advisors}")
                     report_pages.append(page["filename"])
                     continue
 
-                # page = Path(path)
-                print(f"adv path: {path}")
-                report_pages.append(path)
+                report_pages.append(str(advisor_pdf))
             case "emx":
                 print("EMX slot")
                 # get emx source from template.json
@@ -318,7 +368,15 @@ def replace_text_with_formatting(pdf_path, search_text, replace_text, font_file=
                             redact_rect = pymupdf.Rect(bbox[0], origin[1] - ascent, bbox[2], origin[1] + descent)
 
                             page.add_redact_annot(redact_rect)
-                            page.apply_redactions()
+                            # images=0 (PDF_REDACT_IMAGE_NONE): leave every
+                            # image untouched, regardless of overlap -- we
+                            # only ever intend to redact text here. The
+                            # default instead blanks out overlapping image
+                            # *pixels*, which requires MuPDF to decode/mask/
+                            # re-encode the image and can end up blanking the
+                            # whole thing (e.g. the cover page's background
+                            # art near the household name/date text).
+                            page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
 
                             if font_file:
                                 fontname = Path(font_file).stem.replace(" ", "-")

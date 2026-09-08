@@ -15,6 +15,7 @@ class DetailsScreen(WizardScreen):
         self.content_layout.addWidget(self._build_page_numbers())
 
         self.set_primary("Compile Report", enabled=False, callback=self._on_continue)
+        self.set_back(callback=self._on_back)
 
         self.client_name_field.textChanged.connect(self._validate)
         self._validate()
@@ -124,6 +125,10 @@ class DetailsScreen(WizardScreen):
         self.main_window.stack.setCurrentWidget(self.main_window.compile_screen)
         self.main_window.compile_screen.start()
 
+    def _on_back(self):
+        self.main_window.sources_advisors_screen.show_form()
+        self.main_window.stack.setCurrentWidget(self.main_window.sources_advisors_screen)
+
     def reset(self):
         self.client_name_field.clear()
         self.use_target_date.setChecked(False)
@@ -133,5 +138,9 @@ class DetailsScreen(WizardScreen):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._set_default_date()
+        # Only refresh the default when it's actually in use -- otherwise
+        # returning here via Back (e.g. from Compile) would silently
+        # overwrite a target date the user already chose.
+        if not self.use_target_date.isChecked():
+            self._set_default_date()
         self.client_name_field.setFocus()

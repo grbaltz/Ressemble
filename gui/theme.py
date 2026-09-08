@@ -58,6 +58,11 @@ QLineEdit:focus, QDateEdit:focus {{
     border: 1px solid {ACCENT};
 }}
 
+QLineEdit[dragActive="true"] {{
+    border: 1px dashed {ACCENT};
+    background: {BACKGROUND};
+}}
+
 QLineEdit:disabled, QDateEdit:disabled {{
     color: {MUTED_TEXT};
     background: {BACKGROUND};

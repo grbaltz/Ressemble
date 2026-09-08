@@ -1,7 +1,7 @@
 """
 Handles non-PDF EMX sources: converts a .doc/.docx file to PDF via a
-headless LibreOffice, then removes bold styling from its first page (the
-EMX cover sheet often arrives bolded and needs to match the rest of the
+headless LibreOffice, then removes bold styling throughout the document
+(EMX reports often arrive bolded and need to match the rest of the
 report). The rest of the app only ever works with PDFs -- this is the one
 place a Word document enters the pipeline, and it leaves as a PDF.
 """
@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import pymupdf
+from src.paths import FONTS_DIR
 
 OFFICE_EXTENSIONS = {".doc", ".docx"}
 
@@ -30,26 +31,50 @@ _SOFFICE_CANDIDATES = {
     ],
 }.get(sys.platform, ["soffice"])
 
-# Used only when a page's bold text has no font family that fc-match (or
-# the platform equivalent) can resolve -- a generic, virtually always-
-# present regular-weight sans font to fall back on rather than failing.
-_FALLBACK_FONT_CANDIDATES = {
-    "win32": [r"C:\Windows\Fonts\arial.ttf"],
-    "darwin": ["/Library/Fonts/Arial.ttf", "/System/Library/Fonts/Supplemental/Arial.ttf"],
-}.get(sys.platform, [
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-])
+# Used whenever a page's bold text has no font family that can otherwise
+# be resolved to a real regular-weight font on this system -- bundled with
+# the app (see packaging/ressemble.spec) rather than pointed at some
+# assumed OS install path, since none of those are reliable: e.g. macOS
+# only *activates* some of its bundled fonts (Arial included) on demand --
+# the .ttf may not exist on disk as a plain file until something actually
+# requests it through CoreText, which we don't. Metric-compatible with
+# Arial, so substituted text still lines up the same as the original.
+FALLBACK_REGULAR_FONT_FILE = str(FONTS_DIR / "LiberationSans-Regular.ttf")
+
+# fc-match (used below) needs fontconfig, which Linux distros ship with but
+# macOS doesn't -- this is the "platform equivalent" for macOS: a plain
+# filename search over the directories macOS actually keeps real font
+# files in, matching by normalized family name instead of shelling out to
+# a tool that's very unlikely to be installed.
+_MACOS_FONT_DIRS = [
+    Path("/System/Library/Fonts/Supplemental"),
+    Path("/Library/Fonts"),
+    Path.home() / "Library" / "Fonts",
+    Path("/System/Library/Fonts"),
+]
 
 
-def _find_fallback_font():
-    for candidate in _FALLBACK_FONT_CANDIDATES:
-        if Path(candidate).is_file():
-            return candidate
-    return None
+def _normalize_font_name(name):
+    return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
-FALLBACK_REGULAR_FONT_FILE = _find_fallback_font()
+def _find_macos_family_file(family):
+    target = _normalize_font_name(family)
+    best = None
+    for directory in _MACOS_FONT_DIRS:
+        if not directory.is_dir():
+            continue
+        for font_file in directory.glob("*"):
+            if font_file.suffix.lower() not in (".ttf", ".otf"):
+                continue
+            stem = _normalize_font_name(font_file.stem)
+            if stem in (target, target + "regular"):
+                return str(font_file)
+            if best is None and stem.startswith(target) and not any(
+                weight in stem for weight in ("bold", "italic", "oblique")
+            ):
+                best = str(font_file)
+    return best
 
 
 def _find_soffice():
@@ -113,11 +138,16 @@ def _int_to_rgb(color_int):
 
 
 def _resolve_regular_font_file(family):
-    # fc-match resolves against real, fully-glyphed system font files --
-    # unlike the fonts embedded in the PDF itself, which LibreOffice
-    # subsets down to only the glyphs each specific run actually used
-    # (fine for the original text, but missing glyphs for whatever new
-    # text we'd reinsert through them).
+    # Resolving against a real, fully-glyphed system font file (rather than
+    # the fonts embedded in the PDF itself, which LibreOffice subsets down
+    # to only the glyphs each specific run actually used) matters because
+    # we're inserting new text through it -- text the subsetted embedded
+    # font is very likely missing glyphs for.
+    if sys.platform == "darwin":
+        found = _find_macos_family_file(family)
+        if found:
+            return found
+
     try:
         result = subprocess.run(
             ["fc-match", "--format=%{file}", f"{family}:style=Regular"],
@@ -129,21 +159,15 @@ def _resolve_regular_font_file(family):
     except (subprocess.SubprocessError, OSError):
         pass
 
-    if not FALLBACK_REGULAR_FONT_FILE:
-        raise RuntimeError(
-            "No regular-weight font could be found to debold page 1 with -- "
-            f"neither fc-match resolved '{family}' nor any of the built-in fallback fonts exist on this system."
-        )
     return FALLBACK_REGULAR_FONT_FILE
 
 
-def debold_first_page(pdf_path):
-    """Rewrites every bold text run on page 1 of pdf_path as non-bold,
-    in place. Other pages are untouched. Returns True if any bold text
-    had to fall back to the generic substitute font (its family couldn't
-    be resolved to a real regular-weight font on the system)."""
+def debold_document(pdf_path):
+    """Rewrites every bold text run across every page of pdf_path as
+    non-bold, in place. Returns True if any bold text had to fall back to
+    the generic substitute font (its family couldn't be resolved to a real
+    regular-weight font on the system)."""
     doc = pymupdf.open(pdf_path)
-    page = doc[0]
 
     resolved_fonts = {}  # family key -> font file path
 
@@ -152,40 +176,48 @@ def debold_first_page(pdf_path):
             resolved_fonts[family] = _resolve_regular_font_file(family)
         return resolved_fonts[family]
 
-    spans = [
-        span
-        for block in page.get_text("dict")["blocks"] if "lines" in block
-        for line in block["lines"]
-        for span in line["spans"]
-        if span["flags"] & pymupdf.TEXT_FONT_BOLD and span["text"].strip()
-    ]
-
     used_fallback = False
 
-    for span in spans:
-        size = span["size"]
-        color = _int_to_rgb(span["color"])
-        origin = span["origin"]
-        bbox = span["bbox"]
+    for page in doc:
+        spans = [
+            span
+            for block in page.get_text("dict")["blocks"] if "lines" in block
+            for line in block["lines"]
+            for span in line["spans"]
+            if span["flags"] & pymupdf.TEXT_FONT_BOLD and span["text"].strip()
+        ]
 
-        family = _font_family_key(span["font"])
-        font_file = font_file_for(family)
-        fontname = f"debold-{family}"[:63]
-        if font_file == FALLBACK_REGULAR_FONT_FILE:
-            used_fallback = True
+        for span in spans:
+            size = span["size"]
+            color = _int_to_rgb(span["color"])
+            origin = span["origin"]
+            bbox = span["bbox"]
 
-        # Same tight, baseline-relative redaction envelope used for the
-        # cover-page substitutions -- the raw span bbox is font-metric
-        # based and can bleed into neighboring lines.
-        ascent = size * 0.75
-        descent = size * 0.25
-        redact_rect = pymupdf.Rect(bbox[0], origin[1] - ascent, bbox[2], origin[1] + descent)
+            family = _font_family_key(span["font"])
+            font_file = font_file_for(family)
+            fontname = f"debold-{family}"[:63]
+            if font_file == FALLBACK_REGULAR_FONT_FILE:
+                used_fallback = True
 
-        page.add_redact_annot(redact_rect)
-        page.apply_redactions()
+            # Same tight, baseline-relative redaction envelope used for the
+            # cover-page substitutions -- the raw span bbox is font-metric
+            # based and can bleed into neighboring lines.
+            ascent = size * 0.75
+            descent = size * 0.25
+            redact_rect = pymupdf.Rect(bbox[0], origin[1] - ascent, bbox[2], origin[1] + descent)
 
-        page.insert_font(fontname=fontname, fontfile=font_file)
-        page.insert_text(origin, span["text"], fontname=fontname, fontsize=size, color=color)
+            page.add_redact_annot(redact_rect)
+            # images=0 (PDF_REDACT_IMAGE_NONE): leave every image untouched,
+            # regardless of overlap. We only ever intend to redact text --
+            # the default (blank out overlapping image *pixels*) requires
+            # MuPDF to decode/mask/re-encode any image the rect touches,
+            # which on some pages was blanking the whole image instead of
+            # just the intersecting sliver (e.g. a bold chart title or
+            # label sitting right next to/on a chart image).
+            page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
+
+            page.insert_font(fontname=fontname, fontfile=font_file)
+            page.insert_text(origin, span["text"], fontname=fontname, fontsize=size, color=color)
 
     doc.save(pdf_path, incremental=True, encryption=pymupdf.PDF_ENCRYPT_KEEP)
     doc.close()
@@ -196,10 +228,10 @@ def debold_first_page(pdf_path):
 def prepare_emx_source(source_path):
     """Given whatever the user picked as the EMX source, return a plain
     PDF path ready for the rest of the pipeline. .doc/.docx sources are
-    converted and debolded on page 1; a .pdf source is returned as-is."""
+    converted and fully debolded; a .pdf source is returned as-is."""
     if not is_office_document(source_path):
         return source_path
 
     pdf_path = convert_to_pdf(source_path)
-    debold_first_page(pdf_path)
+    debold_document(pdf_path)
     return pdf_path

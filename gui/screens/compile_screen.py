@@ -84,6 +84,9 @@ class CompileScreen(WizardScreen):
         self.set_title("Compiling Report")
         self.set_subtitle("Assembling the final PDF from the selected sources.")
         self.set_primary(visible=False)
+        # No cancellation path for a running AssembleWorker, so Back is only
+        # offered once there's nothing left to interrupt.
+        self.set_back(visible=False)
 
     def _show_done(self, report_path):
         self.compiling_widget.setVisible(False)
@@ -92,6 +95,7 @@ class CompileScreen(WizardScreen):
         self.set_subtitle("The report has been compiled and saved to the location below.")
         self.path_field.setText(str(report_path))
         self.set_primary("Start New Report", enabled=True, callback=self._new_report, visible=True)
+        self.set_back(callback=self._on_back, visible=True)
 
     def start(self):
         self._show_compiling()
@@ -150,6 +154,9 @@ class CompileScreen(WizardScreen):
 
     def _new_report(self):
         self.main_window.restart()
+
+    def _on_back(self):
+        self.main_window.stack.setCurrentWidget(self.main_window.details_screen)
 
     def reset(self):
         self._report_path = None

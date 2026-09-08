@@ -17,6 +17,7 @@ REPO_ROOT = Path(SPECPATH).resolve().parent
 datas = [
     (str(REPO_ROOT / "src" / "fonts" / "Avenir Black.ttf"), "src/fonts"),
     (str(REPO_ROOT / "src" / "fonts" / "Times New Roman.ttf"), "src/fonts"),
+    (str(REPO_ROOT / "src" / "fonts" / "LiberationSans-Regular.ttf"), "src/fonts"),
 ]
 binaries = []
 hiddenimports = []

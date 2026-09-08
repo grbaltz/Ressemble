@@ -7,7 +7,7 @@ from collections import Counter
 from pathlib import Path
 from src.pdf_reader import PDFReader
 from src.office_import import prepare_emx_source
-from src.paths import PAGES_CONFIG_PATH, TEMPLATE_CONFIG_PATH, BASE_DATA_PATH, ADVISORS_PATH
+from src.paths import PAGES_CONFIG_PATH, TEMPLATE_CONFIG_PATH, BASE_DATA_PATH
 from rapidfuzz import fuzz
 
 MINIMUM_MATCH_SCORE = 95
@@ -37,18 +37,24 @@ def clear_directory(directory_path):
         else:
             item.unlink()
 
-def prepare_report(pdf, refresh, log, progress, request_label, request_sources):
+def scan_template(pdf, refresh, log, progress, request_label):
+    """Fingerprints every page of the report template, prompting for a
+    label on any page that's new. This is the only part of preparing a
+    report that touches the template PDF itself -- EMX/BD and the
+    advisors selection are gathered later, independently (see
+    finish_sources() and src/advisors.py), so this can finish and hand
+    off to Details/Compile without ever needing those."""
     print(f"Report from GUI: {pdf}")
-    
+
     doc = PDFReader(pdf)
     clear_directory(BASE_DATA_PATH)
     split_dir = doc.split_pages()
-    
+
     new_template = refresh or is_new_template(pdf)
 
     # match pages in template to existing (basically check if new template)
     matched_pages, new_page_ids = match_pages(pdf, split_dir, log, progress)
-    
+
     if new_template or len(new_page_ids) > 0:
         request_labels(
             matched_pages,
@@ -57,17 +63,32 @@ def prepare_report(pdf, refresh, log, progress, request_label, request_sources):
             request_label,
         )
 
-    sources = request_source_files(
-        log,
-        request_sources,
-    )
+    return matched_pages
+
+def finish_sources(pdf, matched_pages, emx_pdf, blackdiamond_pdf, selected_advisors, log):
+    """Everything that depends on the EMX/BD files and the advisor
+    selection -- both only available once the user reaches the Sources
+    screen, well after the template itself was already fingerprinted."""
+    sources = request_source_files(log, emx_pdf, blackdiamond_pdf)
 
     save_template(pdf, matched_pages, sources)
 
     get_emx_order()
     get_bd_order()
-    
-    return matched_pages, sources
+
+    # Saved so assemble_report() can look up the matching pre-designed team
+    # page for this exact set of names (see src/advisors.py) -- the
+    # advisors PDF the user provided is split one page per combination, not
+    # one page per person, so only an exact combination has a real page.
+    with open(TEMPLATE_CONFIG_PATH, "r") as t:
+        template = json.load(t)
+
+    template["selected_advisors"] = selected_advisors
+
+    with open(TEMPLATE_CONFIG_PATH, "w") as t:
+        json.dump(template, t)
+
+    return sources
 
 # scan imported template pages, match to existing configs
 def match_pages(pdf, match_dir, log=None, progress=None):
@@ -111,10 +132,26 @@ def request_labels(
     log,
     request_label
 ):
-    # Refresh and reset the template
+    # Refresh and reset the template -- but keep the advisors roster
+    # (advisors_source/advisor_names, see src/advisors.py) and the tear
+    # sheets roster (tear_sheets_source/tear_sheet_models, see
+    # src/tear_sheets.py), both of which are independent of the report
+    # template and shouldn't be invalidated by a template change.
     log("Refreshing")
+    try:
+        with open(TEMPLATE_CONFIG_PATH) as f:
+            old_template = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        old_template = {}
+
+    preserved = {
+        key: old_template[key]
+        for key in ("advisors_source", "advisor_names", "tear_sheets_source", "tear_sheet_models")
+        if key in old_template
+    }
+
     with open(TEMPLATE_CONFIG_PATH, "w") as template:
-        json.dump({}, template)
+        json.dump(preserved, template)
             
     with open(PAGES_CONFIG_PATH) as f:
         pages = json.load(f)
@@ -138,10 +175,8 @@ def request_labels(
     with open(PAGES_CONFIG_PATH, "w") as f:
         json.dump(pages, f)
         
-def request_source_files(log, request_sources):
+def request_source_files(log, emx_pdf, blackdiamond_pdf):
     log("Selecting EMX and BlackDiamond PDFs...")
-
-    emx_pdf, blackdiamond_pdf = request_sources()
 
     if Path(emx_pdf).suffix.lower() in (".doc", ".docx"):
         log("Converting EMX Word document to PDF and removing bold styling from page 1…")
@@ -426,9 +461,21 @@ def is_new_template(pdf):
 def save_template(pdf, matched_pages, sources):
     with open(PAGES_CONFIG_PATH) as f:
         pages = json.load(f)
-        
-    template = { "filename": pdf, "pages": [], "sources": sources}
-    
+
+    # Merge into whatever's already there rather than replacing the whole
+    # file -- the advisors roster (advisors_source/advisor_names, see
+    # src/advisors.py) is cached in this same file and is independent of
+    # the report template, so it must survive every report generation.
+    try:
+        with open(TEMPLATE_CONFIG_PATH) as f:
+            template = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        template = {}
+
+    template["filename"] = pdf
+    template["sources"] = sources
+    template["pages"] = []
+
     for page_info in matched_pages:
         id = page_info["id"]
         
@@ -524,23 +571,3 @@ def get_bd_order():
 
     for i, tmp in enumerate(temps):
         tmp.rename(bd2_dir / f"{i}.pdf")
-        
-def select_advisor_file(log, request_advisors):
-    log("Request Advisors")
-    advisors = request_advisors()
-    advisors_filename = "_".join(advisors).strip().lower().replace(" ", "") + ".pdf"
-    print(f"Selected advisors: {advisors} {advisors_filename}")
-    path = Path(ADVISORS_PATH / advisors_filename)
-    print(f"path {path}, exists? {path.exists()}")
-    
-    if path.exists() and path.is_file():
-        with open(TEMPLATE_CONFIG_PATH, "r") as t:
-            template = json.load(t)
-        
-        template["advisors_filename"] = str(path)
-        
-        with open(TEMPLATE_CONFIG_PATH, "w") as t:
-            json.dump(template, t)
-        
-        print("dumped")
-        return path
