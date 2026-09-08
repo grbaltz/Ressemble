@@ -43,7 +43,26 @@ def scan_template(pdf, refresh, log, progress, request_label):
     report that touches the template PDF itself -- EMX/BD and the
     advisors selection are gathered later, independently (see
     finish_sources() and src/advisors.py), so this can finish and hand
-    off to Details/Compile without ever needing those."""
+    off to Details/Compile without ever needing those.
+
+    Skipped entirely when the template hasn't changed since the last
+    successful scan (same filename, and a cached scan actually on file) --
+    otherwise every launch would re-fingerprint every page from scratch
+    even though nothing about the template is actually different.
+    """
+    if not refresh and not is_new_template(pdf):
+        try:
+            with open(TEMPLATE_CONFIG_PATH) as f:
+                cached_pages = json.load(f).get("pages") or []
+        except (FileNotFoundError, json.JSONDecodeError):
+            cached_pages = []
+
+        if cached_pages:
+            log("Template unchanged -- using the cached scan.")
+            if progress:
+                progress(len(cached_pages), len(cached_pages))
+            return [{"id": page["id"]} for page in cached_pages]
+
     print(f"Report from GUI: {pdf}")
 
     doc = PDFReader(pdf)
