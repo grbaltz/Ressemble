@@ -19,14 +19,22 @@ import re
 import pymupdf
 from src.paths import ADVISORS_PATH, TEMPLATE_CONFIG_PATH
 
-# The advisor's name is set in this exact font/size on every team-combo
-# page (verified against the real file) -- distinct from the much larger
-# "Your Rebalance Team" page title and the smaller title/contact lines
-# below each name, so an exact match is more reliable here than a
-# generic "biggest text on the page" heuristic (which grabs the title).
-_NAME_FONT = "Avenir-Black"
-_NAME_SIZE = 18.0
-_SIZE_TOLERANCE = 0.5
+# Name detection doesn't pin to one specific font/size -- a later revision
+# of the source file (src/import/Team Pages 08 2026 v2.pdf) switched fonts
+# entirely (Avenir-Black -> Anth-Bold) while keeping the same relative
+# layout, which broke a prior version of this that matched one exact
+# font+size. Instead: within each page's *bold* text, group by size --
+# the page's own title (e.g. "Your Rebalance Team", repeated on every
+# page regardless of who's shown) is reliably the single largest bold
+# size, and a person's name renders one tier down from that, whatever
+# that size happens to be in this particular file's styling. Confirmed
+# against both the v1 and v2 files: bold size tiers are
+# {36: title, 18: names, 14: bold job titles} and {36: title, 18: names}
+# respectively -- "one tier below the largest" lands on 18 either way,
+# where a naive "everything but the largest" would also sweep in v1's
+# bold job-title line. A name-shape check on top guards against picking
+# up something else entirely in a future layout.
+_NAME_SHAPE = re.compile(r"^[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){1,3}$")
 
 # A name can render as a second line break onto its own text run (e.g. a
 # credential suffix like "CFP, CCFC" wrapping), which would otherwise be
@@ -46,18 +54,36 @@ def _clean_name(raw_text):
     return name or None
 
 
-def _names_on_page(page):
-    names = []
+def _bold_text_by_size(page):
+    """{rounded font size -> [bold text on the page at that size]}."""
+    sizes = {}
     for block in page.get_text("dict")["blocks"]:
         if block["type"] != 0:
             continue
         for line in block["lines"]:
             for span in line["spans"]:
-                if span["font"] != _NAME_FONT or abs(span["size"] - _NAME_SIZE) > _SIZE_TOLERANCE:
+                text = span["text"].strip()
+                if not text or not (span["flags"] & pymupdf.TEXT_FONT_BOLD):
                     continue
-                name = _clean_name(span["text"])
-                if name:
-                    names.append(name)
+                sizes.setdefault(round(span["size"], 1), []).append(text)
+    return sizes
+
+
+def _names_on_page(page):
+    by_size = _bold_text_by_size(page)
+    if not by_size:
+        return []
+
+    sizes = sorted(by_size, reverse=True)
+    # Falls back to the only size present if there's just one tier (e.g. a
+    # page with a single bold run) -- better to try it than find nothing.
+    name_size = sizes[1] if len(sizes) > 1 else sizes[0]
+
+    names = []
+    for text in by_size[name_size]:
+        name = _clean_name(text)
+        if name and _NAME_SHAPE.match(name):
+            names.append(name)
     return names
 
 
