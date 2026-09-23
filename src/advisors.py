@@ -92,20 +92,34 @@ def split_advisors_pdf(pdf_path):
     whatever was there before -- it always reflects only the most recently
     provided advisors file. Each page is saved whole, named after every
     advisor who appears on it (alphabetically, underscore-joined, matching
-    the naming assemble_report() looks combo files up by). Returns the
-    sorted list of unique advisor names found across the whole file."""
+    the naming assemble_report() looks combo files up by). Returns
+    (sorted unique advisor names, per-page combos) -- the combos are each
+    page's own name list, in the same order/casing they appeared on the
+    page, for the Sources & Advisors screen's "quick select" list (see
+    load_cached_advisor_combos()): reusing those exact per-page lists here
+    means that list can never drift from what actually has a real page,
+    the way reconstructing names from the combo filenames' slugs could if
+    a name were ever ambiguous once slugified.
+    """
     doc = pymupdf.open(pdf_path)
 
     for existing in ADVISORS_PATH.glob("*.pdf"):
         existing.unlink()
 
     unique_names = set()
+    seen_combos = set()
+    combos = []
     for page_num in range(len(doc)):
         names = sorted(set(_names_on_page(doc[page_num])))
         if not names:
             continue
 
         unique_names.update(names)
+
+        combo_key = tuple(names)
+        if combo_key not in seen_combos:
+            seen_combos.add(combo_key)
+            combos.append(names)
 
         combo_page = pymupdf.open()
         combo_page.insert_pdf(doc, from_page=page_num, to_page=page_num)
@@ -114,7 +128,8 @@ def split_advisors_pdf(pdf_path):
         combo_page.close()
 
     doc.close()
-    return sorted(unique_names)
+    combos.sort(key=lambda names: (len(names), names))
+    return sorted(unique_names), combos
 
 
 def load_cached_advisors():
@@ -128,7 +143,21 @@ def load_cached_advisors():
     return template.get("advisors_source"), template.get("advisor_names", [])
 
 
-def _save_cached_advisors(source_path, names):
+def load_cached_advisor_combos():
+    """Returns the per-page name lists from the last successful split (one
+    per real team page, see split_advisors_pdf()), or [] if none has ever
+    run. Used to populate the Sources & Advisors screen's "quick select"
+    list -- every entry here is guaranteed to have a matching combo file,
+    since they came from the same split that created those files."""
+    try:
+        with open(TEMPLATE_CONFIG_PATH) as f:
+            template = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+    return template.get("advisor_combos", [])
+
+
+def _save_cached_advisors(source_path, names, combos):
     try:
         with open(TEMPLATE_CONFIG_PATH) as f:
             template = json.load(f)
@@ -137,6 +166,7 @@ def _save_cached_advisors(source_path, names):
 
     template["advisors_source"] = source_path
     template["advisor_names"] = names
+    template["advisor_combos"] = combos
 
     with open(TEMPLATE_CONFIG_PATH, "w") as f:
         json.dump(template, f)
@@ -152,8 +182,8 @@ def ensure_advisors_split(pdf_path):
     if cached_source == pdf_path and cached_names:
         return cached_names
 
-    names = split_advisors_pdf(pdf_path)
-    _save_cached_advisors(pdf_path, names)
+    names, combos = split_advisors_pdf(pdf_path)
+    _save_cached_advisors(pdf_path, names, combos)
     return names
 
 
@@ -161,10 +191,21 @@ def advisor_combo_file(selected_names):
     """The combo file matching an exact set of selected advisor names, or
     None if this particular combination wasn't one of the pages in the
     provided advisors PDF -- picking an arbitrary subset of the roster
-    isn't guaranteed to have a matching pre-designed page."""
-    if not selected_names:
+    isn't guaranteed to have a matching pre-designed page.
+
+    Deduplicates and drops blanks before matching -- selected_names may
+    come straight from the Advisor 1/2/3/Service Advisor dropdowns, which
+    (unlike the old checkbox list) can have the same name picked twice or
+    a slot left unset. Two dropdowns pointing at the same person is just a
+    3-person team with a redundant pick, not automatically "no page for
+    this" -- a literal, un-deduplicated slug would never match any real
+    combo file, since split_advisors_pdf() never names one with a repeated
+    name to begin with.
+    """
+    names = {name for name in selected_names if name}
+    if not names:
         return None
 
-    slug = "_".join(slugify_advisor_name(name) for name in sorted(selected_names))
+    slug = "_".join(slugify_advisor_name(name) for name in sorted(names))
     combo_pdf = ADVISORS_PATH / f"{slug}.pdf"
     return combo_pdf if combo_pdf.exists() else None

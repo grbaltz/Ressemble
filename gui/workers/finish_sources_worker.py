@@ -9,6 +9,7 @@ class FinishSourcesWorker(QObject):
     ever runs."""
 
     log = Signal(str)
+    progress = Signal(int, int) # current, total
     finished = Signal(object) # sources dict, or None on failure
 
     def __init__(self, pdf, matched_pages, emx_pdf, blackdiamond_pdf, selected_advisors):
@@ -32,6 +33,7 @@ class FinishSourcesWorker(QObject):
                 blackdiamond_pdf=self.blackdiamond_pdf,
                 selected_advisors=self.selected_advisors,
                 log=self.log.emit,
+                progress=self.progress.emit,
             )
         except Exception as exc:
             self.log.emit(f"Error processing sources: {exc}")

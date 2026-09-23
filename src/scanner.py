@@ -41,10 +41,10 @@ def invalidate_cached_template():
     """Clears template.json's filename/pages/sources -- the fields the
     cache shortcut at the top of scan_template() trusts to skip a real
     rescan -- while keeping the advisors roster (advisors_source/
-    advisor_names, see src/advisors.py) and the tear sheets roster
-    (tear_sheets_source/tear_sheet_models, see src/tear_sheets.py), both
-    of which are independent of the report template and shouldn't be
-    invalidated by a template change.
+    advisor_names/advisor_combos, see src/advisors.py) and the tear
+    sheets roster (tear_sheets_source/tear_sheet_models, see
+    src/tear_sheets.py), both of which are independent of the report
+    template and shouldn't be invalidated by a template change.
     """
     try:
         with open(TEMPLATE_CONFIG_PATH) as f:
@@ -54,7 +54,13 @@ def invalidate_cached_template():
 
     preserved = {
         key: old_template[key]
-        for key in ("advisors_source", "advisor_names", "tear_sheets_source", "tear_sheet_models")
+        for key in (
+            "advisors_source",
+            "advisor_names",
+            "advisor_combos",
+            "tear_sheets_source",
+            "tear_sheet_models",
+        )
         if key in old_template
     }
 
@@ -115,16 +121,27 @@ def scan_template(pdf, refresh, log, progress, request_label):
 
     return matched_pages
 
-def finish_sources(pdf, matched_pages, emx_pdf, blackdiamond_pdf, selected_advisors, log):
+def finish_sources(pdf, matched_pages, emx_pdf, blackdiamond_pdf, selected_advisors, log, progress=None):
     """Everything that depends on the EMX/BD files and the advisor
     selection -- both only available once the user reaches the Sources
-    screen, well after the template itself was already fingerprinted."""
+    screen, well after the template itself was already fingerprinted.
+
+    get_emx_order()/get_bd_order() are the slow part of this (splitting
+    and, for BD, per-page text extraction over however many pages the
+    source PDF has) and used to run silently -- log() only covered
+    request_source_files()'s few lines before them, so a large source
+    file could sit on the Sources & Advisors screen for a while with
+    nothing in the Details log and an indeterminate progress bar,
+    indistinguishable from having actually hung. Both now log their own
+    progress and, if given, report through `progress` too.
+    """
     sources = request_source_files(log, emx_pdf, blackdiamond_pdf)
 
+    log("Saving template…")
     save_template(pdf, matched_pages, sources)
 
-    get_emx_order()
-    get_bd_order()
+    get_emx_order(log=log, progress=progress)
+    get_bd_order(log=log, progress=progress)
 
     # Saved so assemble_report() can look up the matching pre-designed team
     # page for this exact set of names (see src/advisors.py) -- the
@@ -137,6 +154,8 @@ def finish_sources(pdf, matched_pages, emx_pdf, blackdiamond_pdf, selected_advis
 
     with open(TEMPLATE_CONFIG_PATH, "w") as t:
         json.dump(template, t)
+
+    log("Sources ready.")
 
     return sources
 
@@ -618,31 +637,41 @@ def save_template(pdf, matched_pages, sources):
     with open(TEMPLATE_CONFIG_PATH, "w") as f:
         json.dump(template, f, indent=2)
 
-def get_emx_order():
+def get_emx_order(log=None, progress=None):
+    log = log or print
+
     with open(TEMPLATE_CONFIG_PATH, "r") as t:
         template = json.load(t)
-    
+
     if not (template.get("sources") or {}).get("emx_pdf"):
         print("No emx file saved")
         return
-    
+
     doc = PDFReader(template["sources"]["emx_pdf"])
-    split_dir = doc.split_pages()
+    split_dir = doc.split_pages(log=log)
 
-    for page in sorted(split_dir.glob("*.pdf"), key=lambda x: numeric_key(x.name)):
+    pages = sorted(split_dir.glob("*.pdf"), key=lambda x: numeric_key(x.name))
+    total = len(pages)
+    for i, page in enumerate(pages):
         shutil.move(page, split_dir / page.name)
+        if progress:
+            progress(i + 1, total)
 
-def get_bd_order():
+    log(f"EMX pages ready ({total} page{'s' if total != 1 else ''}).")
+
+def get_bd_order(log=None, progress=None):
+    log = log or print
+
     with open(TEMPLATE_CONFIG_PATH, "r") as t:
         template = json.load(t)
-    
+
     if not (template.get("sources") or {}).get("blackdiamond_pdf"):
         print("No blackdiamond file saved")
         return
-    
+
     doc = PDFReader(template["sources"]["blackdiamond_pdf"])
-    split_dir = doc.split_pages()
-    
+    split_dir = doc.split_pages(log=log)
+
     bd1_dir = split_dir / "bd1"
     bd2_dir = split_dir / "bd2"
 
@@ -650,42 +679,59 @@ def get_bd_order():
     bd2_dir.mkdir(exist_ok=True)
 
     unsorted = []
-    
-    for page_info in sorted(split_dir.glob("*.pdf"), key=lambda x: numeric_key(x.name)):
+
+    pages = sorted(split_dir.glob("*.pdf"), key=lambda x: numeric_key(x.name))
+    total = len(pages)
+    log(f"Sorting {total} Black Diamond page{'s' if total != 1 else ''} into overview vs. per-account…")
+
+    for i, page_info in enumerate(pages):
         print(f"page_info: {numeric_key(page_info.name)[1]}")
-        
+        if progress:
+            progress(i + 1, total)
+
+        # Read everything needed from this page, then close it, before
+        # any shutil.move() below touches the same file -- pymupdf.open()
+        # keeps the file open/memory-mapped, and moving a file a process
+        # still has open fails outright on Windows ("used by another
+        # process"), which is likely why this screen has been crashing:
+        # every page used to stay open through its own move.
         doc = pymupdf.open(page_info)
         page = doc[0]
-        
+
         text = page.get_text()
+        is_account_page = "Allocation and Return" in text
 
-        if "Allocation and Return" not in text:
-            shutil.move(page_info, bd1_dir / page_info.name)
-            continue            
+        total_value = None
+        if is_account_page:
+            matches = page.search_for("Value ($)")
+            if matches:
+                header = matches[0]
+                column_rect = pymupdf.Rect(
+                    header.x0 - 5,
+                    header.y1,
+                    header.x1 + 5,
+                    page.rect.height
+                )
+                column_text = page.get_text("text", clip=column_rect)
+                numbers = re.findall(r'\d[\d,]*', column_text)
+                if numbers:
+                    total_value = int(numbers[-1].replace(",", ""))
 
-        matches = page.search_for("Value ($)")
-        if not matches:
+        doc.close()
+
+        if total_value is None:
+            if is_account_page:
+                # Matched "Allocation and Return" and (usually) had a
+                # "Value ($)" column, but the value itself didn't parse --
+                # treat it as an overview page rather than crashing the
+                # whole report on one odd page.
+                log(f"Couldn't read a portfolio value on {page_info.name} -- treating it as an overview page.")
             shutil.move(page_info, bd1_dir / page_info.name)
             continue
 
-        header = matches[0]
-
-        column_rect = pymupdf.Rect(
-            header.x0 - 5,
-            header.y1,
-            header.x1 + 5,
-            page.rect.height
-        )
-
-        text = page.get_text("text", clip=column_rect)
-        
-        numbers = re.findall(r'\d[\d,]*', text)
-
-        total = int(numbers[-1].replace(",", ""))
-
         shutil.move(page_info, bd2_dir / page_info.name)
-        unsorted.append({"name": Path(page_info).name, "value": total })
-    
+        unsorted.append({"name": Path(page_info).name, "value": total_value})
+
     unsorted.sort(key=lambda x: x["value"], reverse=True)
 
     pages = [bd2_dir / p["name"] for p in unsorted]
@@ -699,3 +745,5 @@ def get_bd_order():
 
     for i, tmp in enumerate(temps):
         tmp.rename(bd2_dir / f"{i}.pdf")
+
+    log(f"Black Diamond pages ready ({len(unsorted)} account page{'s' if len(unsorted) != 1 else ''}).")

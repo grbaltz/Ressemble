@@ -39,6 +39,11 @@ QLabel[class="status"] {{
     color: {MUTED_TEXT};
 }}
 
+QLabel[class="warning"] {{
+    font-size: 13px;
+    color: {DANGER};
+}}
+
 QLabel[class="section"] {{
     font-size: 13px;
     font-weight: 600;
@@ -73,9 +78,82 @@ QLineEdit[readOnly="true"] {{
     color: {MUTED_TEXT};
 }}
 
-QDateEdit::drop-down {{
-    width: 0px;
+/* No ::drop-down/::down-arrow rule here (deliberately) -- styling
+   ::drop-down at all makes Qt stop drawing the style's own arrow glyph
+   unless ::down-arrow supplies a replacement image, and a QSS
+   border-triangle (the usual no-asset trick for this) rendered as a
+   solid block, not a triangle, under this app's Fusion style: confirmed
+   by rendering both this and QComboBox's drop-down and inspecting the
+   pixels. Leaving both unstyled gets Fusion's own correctly-shaped arrow
+   for free, with no icon asset needed. */
+
+/* The calendar popup QDateEdit's now-enabled drop-down opens -- styled to match
+   the rest of the app's theme rather than the OS default, since it's the
+   one native Qt widget left in an otherwise custom-styled form. */
+QCalendarWidget QWidget#qt_calendar_navigationbar {{
+    background: {SURFACE};
+    border-bottom: 1px solid {BORDER};
+}}
+
+QCalendarWidget QToolButton {{
+    color: {TEXT};
+    background: transparent;
     border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-weight: 600;
+}}
+
+QCalendarWidget QToolButton:hover {{
+    background: {BACKGROUND};
+}}
+
+QCalendarWidget QToolButton::menu-indicator {{
+    image: none;
+}}
+
+QCalendarWidget QSpinBox {{
+    background: {SURFACE};
+    border: 1px solid {BORDER};
+    border-radius: 4px;
+    padding: 2px 4px;
+    selection-background-color: {ACCENT};
+}}
+
+QCalendarWidget QMenu {{
+    background: {SURFACE};
+    border: 1px solid {BORDER};
+}}
+
+QCalendarWidget QAbstractItemView {{
+    background: {SURFACE};
+    color: {TEXT};
+    selection-background-color: {ACCENT};
+    selection-color: white;
+    outline: none;
+}}
+
+QCalendarWidget QAbstractItemView:disabled {{
+    color: {MUTED_TEXT};
+}}
+
+QComboBox {{
+    background: {SURFACE};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 7px 10px;
+    selection-background-color: {ACCENT};
+}}
+
+QComboBox:focus {{
+    border: 1px solid {ACCENT};
+}}
+
+QComboBox QAbstractItemView {{
+    background: {SURFACE};
+    border: 1px solid {BORDER};
+    outline: none;
+    selection-background-color: {ACCENT};
 }}
 
 QPushButton {{
@@ -165,52 +243,6 @@ QCheckBox::indicator {{
 QCheckBox::indicator:checked {{
     background: {ACCENT};
     border: 1px solid {ACCENT};
-}}
-
-QListWidget {{
-    background: {SURFACE};
-    border: 1px solid {BORDER};
-    border-radius: 6px;
-    padding: 4px;
-    outline: none;
-}}
-
-QListWidget::item {{
-    padding: 8px 6px;
-    border-radius: 4px;
-}}
-
-QListWidget::item:hover {{
-    background: {BACKGROUND};
-}}
-
-/* Selected/current (e.g. the row last clicked or checked) needs its own
-   look, distinct from disabled -- reusing the same muted grey for both
-   made an enabled-but-selected row (like one just unchecked) look
-   identical to an actually-disabled one. A border keeps the fill the
-   same as a normal enabled row instead of graying it. */
-QListWidget::item:selected {{
-    background: {SURFACE};
-    color: {TEXT};
-    border: 1px solid {ACCENT};
-}}
-
-QListWidget::item:focus {{
-    background: {SURFACE};
-    color: {TEXT};
-}}
-
-/* Declared after :selected/:focus so it always wins if a disabled item
-   somehow retains selection/focus. */
-QListWidget::item:disabled {{
-    background: {BACKGROUND};
-    color: {MUTED_TEXT};
-    border: none;
-}}
-
-QListWidget::indicator:disabled {{
-    background: {BACKGROUND};
-    border: 1px solid {BORDER};
 }}
 
 QProgressBar {{

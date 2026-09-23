@@ -5,23 +5,25 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QProgressBar,
     QTextEdit,
-    QListWidgetItem,
+    QComboBox,
     QVBoxLayout,
     QHBoxLayout,
 )
 from PySide6.QtCore import Qt, QThread
 from gui.widgets.wizard_screen import WizardScreen
 from gui.widgets.file_drop_line_edit import FileDropLineEdit
-from gui.widgets.checkable_list_widget import CheckableListWidget
 from gui.widgets.collapsible import CollapsibleSection
 from gui.workers.finish_sources_worker import FinishSourcesWorker
-from src.advisors import load_cached_advisors, advisor_combo_file
+from src.advisors import load_cached_advisors, load_cached_advisor_combos, advisor_combo_file
 from pathlib import Path
+from itertools import zip_longest
 
 EMX_EXTENSIONS = {".pdf", ".doc", ".docx"}
 BD_EXTENSIONS = {".pdf"}
 
-NO_COMBO_TOOLTIP = "This Advisor combination page has not been provided"
+ADVISOR_ROLES = ["Advisor 1", "Advisor 2", "Advisor 3", "Service Advisor"]
+
+NO_COMBO_WARNING = "This combination doesn't match an existing team page -- the report will fall back to a placeholder for it."
 
 class SourcesAdvisorsScreen(WizardScreen):
     """The per-report inputs left once the Scan screen has the template
@@ -46,6 +48,8 @@ class SourcesAdvisorsScreen(WizardScreen):
 
         self._emx_path = None
         self._bd_path = None
+        self.worker = None
+        self.thread = None
 
         self.form_widget = self._build_form()
         self.processing_widget = self._build_processing()
@@ -138,9 +142,9 @@ class SourcesAdvisorsScreen(WizardScreen):
         section_label.setProperty("class", "section")
         container.addWidget(section_label)
 
-        # Shown instead of the (empty) list when no advisors PDF has been
-        # scanned yet -- there's no fixed roster shipped with the app, see
-        # ScanScreen's advisors field / src/advisors.py.
+        # Shown instead of the (empty) dropdowns when no advisors PDF has
+        # been scanned yet -- there's no fixed roster shipped with the
+        # app, see ScanScreen's advisors field / src/advisors.py.
         self.no_advisors_label = QLabel(
             "No advisors available -- provide an advisors PDF on the previous screen."
         )
@@ -149,11 +153,69 @@ class SourcesAdvisorsScreen(WizardScreen):
         self.no_advisors_label.setVisible(False)
         container.addWidget(self.no_advisors_label)
 
-        self.advisor_list = CheckableListWidget()
-        self.advisor_list.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.advisor_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.advisor_list.itemChanged.connect(self._on_advisor_item_changed)
-        container.addWidget(self.advisor_list)
+        # Optional shortcut: pick a whole known team at once instead of
+        # setting each of the four roles by hand. Selecting an entry just
+        # fills the role dropdowns below with that team's names (in
+        # whatever order load_cached_advisor_combos() -- ultimately
+        # split_advisors_pdf() -- found them in) and immediately resets
+        # itself back to blank, since it's a one-shot fill rather than a
+        # selection that needs to stay in sync with hand-edits made
+        # afterward.
+        quick_select_row = QHBoxLayout()
+        quick_select_row.setSpacing(8)
+
+        quick_select_label = QLabel("Team Page")
+        quick_select_label.setFixedWidth(110)
+        quick_select_row.addWidget(quick_select_label)
+
+        self.quick_select_combo = QComboBox()
+        self.quick_select_combo.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.quick_select_combo.currentIndexChanged.connect(self._on_quick_select_changed)
+        quick_select_row.addWidget(self.quick_select_combo, 1)
+
+        self.quick_select_row_widget = QWidget()
+        self.quick_select_row_widget.setLayout(quick_select_row)
+        container.addWidget(self.quick_select_row_widget)
+
+        # Four independent role slots rather than a multi-select list --
+        # picking a team is really "who's in each of these roles", and a
+        # combo file is just whichever set of names that produces (see
+        # advisor_combo_file() in src/advisors.py, which dedupes/sorts
+        # before matching, so which slot a name lands in -- or the same
+        # name landing in two slots -- doesn't matter to the lookup
+        # itself). Nothing here prevents an unmatched combination from
+        # being picked; _update_combo_warning() below only ever warns.
+        self.advisor_combos = []
+        self.advisor_rows = []
+        advisors_grid = QVBoxLayout()
+        advisors_grid.setSpacing(8)
+        for role in ADVISOR_ROLES:
+            row = QHBoxLayout()
+            row.setSpacing(8)
+
+            label = QLabel(role)
+            label.setFixedWidth(110)
+            row.addWidget(label)
+
+            combo = QComboBox()
+            combo.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            combo.currentIndexChanged.connect(self._on_advisor_combo_changed)
+            row.addWidget(combo, 1)
+
+            row_widget = QWidget()
+            row_widget.setLayout(row)
+
+            self.advisor_combos.append(combo)
+            self.advisor_rows.append(row_widget)
+            advisors_grid.addWidget(row_widget)
+
+        container.addLayout(advisors_grid)
+
+        self.advisor_warning_label = QLabel(NO_COMBO_WARNING)
+        self.advisor_warning_label.setProperty("class", "warning")
+        self.advisor_warning_label.setWordWrap(True)
+        self.advisor_warning_label.setVisible(False)
+        container.addWidget(self.advisor_warning_label)
 
         widget = QWidget()
         widget.setLayout(container)
@@ -184,33 +246,62 @@ class SourcesAdvisorsScreen(WizardScreen):
         return widget
 
     def _refresh_advisors(self, preserve_selection=True):
-        checked = set(self._selected_advisors()) if preserve_selection else frozenset()
+        previous = self._advisor_slot_values() if preserve_selection else [""] * len(self.advisor_combos)
         _, names = load_cached_advisors()
-        self._populate_advisors(names, checked=checked)
+        self._populate_advisors(names, previous)
 
-    def _populate_advisors(self, names, checked=frozenset()):
-        self.advisor_list.blockSignals(True)
-        self.advisor_list.clear()
-        for name in names:
-            item = QListWidgetItem(name)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked if name in checked else Qt.CheckState.Unchecked)
-            self.advisor_list.addItem(item)
-        self.advisor_list.blockSignals(False)
+    def _populate_advisors(self, names, previous):
+        for combo, prior_value in zip(self.advisor_combos, previous):
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem("", "")
+            for name in names:
+                combo.addItem(name, name)
+
+            index = combo.findData(prior_value) if prior_value else 0
+            combo.setCurrentIndex(index if index >= 0 else 0)
+            combo.blockSignals(False)
+
+        # Filtered to what actually fits the role dropdowns below -- a
+        # team page with more members than there are roles (not the case
+        # in any real data seen so far, but not guaranteed by anything)
+        # couldn't be fully applied by _on_quick_select_changed() anyway,
+        # so it's left out rather than offered and silently truncated.
+        combos = [c for c in load_cached_advisor_combos() if len(c) <= len(self.advisor_combos)]
+        self.quick_select_combo.blockSignals(True)
+        self.quick_select_combo.clear()
+        self.quick_select_combo.addItem("", None)
+        for combo_names in combos:
+            self.quick_select_combo.addItem(", ".join(combo_names), combo_names)
+        self.quick_select_combo.setCurrentIndex(0)
+        self.quick_select_combo.blockSignals(False)
 
         self.no_advisors_label.setVisible(not names)
-        self.advisor_list.setVisible(bool(names))
+        self.quick_select_row_widget.setVisible(bool(combos))
+        for row_widget in self.advisor_rows:
+            row_widget.setVisible(bool(names))
 
-        if names:
-            # QListWidget's sizeHint() is a fixed default, not
-            # content-driven -- it doesn't grow with item count, it just
-            # relies on its scrollbar for overflow. Pin the height to
-            # exactly what all rows need instead.
-            row_height = self.advisor_list.sizeHintForRow(0)
-            frame = 2 * self.advisor_list.frameWidth()
-            self.advisor_list.setFixedHeight(row_height * self.advisor_list.count() + frame)
+        self._update_combo_warning()
 
-        self._update_advisor_availability()
+    def _on_quick_select_changed(self):
+        combo_names = self.quick_select_combo.currentData()
+
+        if combo_names:
+            for role_combo, name in zip_longest(self.advisor_combos, combo_names, fillvalue=""):
+                role_combo.blockSignals(True)
+                index = role_combo.findData(name) if name else 0
+                role_combo.setCurrentIndex(index if index >= 0 else 0)
+                role_combo.blockSignals(False)
+
+            # One-shot fill -- reset immediately rather than leaving this
+            # showing a team name that a subsequent hand-edit to one of
+            # the role dropdowns would silently make inaccurate.
+            self.quick_select_combo.blockSignals(True)
+            self.quick_select_combo.setCurrentIndex(0)
+            self.quick_select_combo.blockSignals(False)
+
+        self._update_combo_warning()
+        self._validate()
 
     def _choose_emx(self):
         # A .doc/.docx EMX source gets converted to PDF (and fully debolded)
@@ -255,45 +346,27 @@ class SourcesAdvisorsScreen(WizardScreen):
             self.settings.setValue("lastReplacementDir", str(Path(filename).parent))
         return filename
 
-    def _selected_advisors(self):
-        return [
-            self.advisor_list.item(i).text()
-            for i in range(self.advisor_list.count())
-            if self.advisor_list.item(i).checkState() == Qt.CheckState.Checked
-        ]
+    def _advisor_slot_values(self):
+        """One entry per dropdown, in role order (Advisor 1/2/3, Service
+        Advisor) -- "" for a slot left on the blank placeholder. Duplicate
+        names across slots are kept as-is; deduplication happens in
+        advisor_combo_file(), not here."""
+        return [combo.currentData() or "" for combo in self.advisor_combos]
 
-    def _on_advisor_item_changed(self, item):
-        self._update_advisor_availability()
+    def _selected_advisors(self):
+        return [name for name in self._advisor_slot_values() if name]
+
+    def _on_advisor_combo_changed(self):
+        self._update_combo_warning()
         self._validate()
 
-    def _update_advisor_availability(self):
-        # Guides the user toward combinations that actually have a page
-        # (see src/advisors.py) rather than letting them assemble an
-        # arbitrary set that silently falls back to a placeholder at
-        # report time. The first pick is always free -- there's no page
-        # for a single advisor alone, so nothing would ever be selectable
-        # if that were also constrained.
-        checked = self._selected_advisors()
-
-        # setFlags()/setToolTip() also emit itemChanged in this Qt version,
-        # not just check-state edits -- without blocking, that re-enters
-        # _on_advisor_item_changed -> here, infinitely.
-        self.advisor_list.blockSignals(True)
-        for i in range(self.advisor_list.count()):
-            item = self.advisor_list.item(i)
-
-            if item.checkState() == Qt.CheckState.Checked or not checked:
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEnabled)
-                item.setToolTip("")
-                continue
-
-            if advisor_combo_file(checked + [item.text()]):
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEnabled)
-                item.setToolTip("")
-            else:
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
-                item.setToolTip(NO_COMBO_TOOLTIP)
-        self.advisor_list.blockSignals(False)
+    def _update_combo_warning(self):
+        # Purely informational -- see the class docstring's note on this
+        # screen not restricting the combination, just flagging one that
+        # won't have a real page to insert at report time.
+        selected = self._selected_advisors()
+        has_match = bool(selected) and advisor_combo_file(selected) is not None
+        self.advisor_warning_label.setVisible(bool(selected) and not has_match)
 
     def _validate(self):
         # The EMX and BD files are deliberately not part of this -- a
@@ -308,7 +381,12 @@ class SourcesAdvisorsScreen(WizardScreen):
         self.set_title("Sources & Advisors")
         self.set_subtitle("Choose the assigned advisors, plus this client's EMX and Black Diamond files if the report includes them.")
         self.set_primary("Continue", callback=self._on_continue, visible=True)
-        self.set_back(visible=True)
+        # Explicit callback (not just visible=True) so this always wins
+        # back over _cancel_processing -- _show_processing() repoints
+        # Back at that while a worker's running, and set_back() only
+        # reconnects when given a callback, not merely toggled visible.
+        self.back_button.setText("Back")
+        self.set_back(callback=self._on_back, visible=True)
         self._validate()
 
     def _show_processing(self):
@@ -321,7 +399,16 @@ class SourcesAdvisorsScreen(WizardScreen):
         self.progress.setValue(0)
         self.log.clear()
         self.set_primary(visible=False)
-        self.set_back(visible=False)
+
+        # There's still no way to actually cancel a running
+        # FinishSourcesWorker (Qt threads can't be safely force-stopped),
+        # but leaving Back/Cancel hidden the whole time this runs meant a
+        # slow or stuck step left the user with no way out of the screen
+        # at all. Cancel below detaches this screen from the worker and
+        # returns to the form; the worker itself keeps running to
+        # completion in the background rather than being killed.
+        self.back_button.setText("Cancel")
+        self.set_back(callback=self._cancel_processing, visible=True)
 
     def _on_continue(self):
         selected_advisors = self._selected_advisors()
@@ -342,6 +429,7 @@ class SourcesAdvisorsScreen(WizardScreen):
         self.thread.started.connect(self.worker.run)
 
         self.worker.log.connect(self.log.append)
+        self.worker.progress.connect(self.on_progress)
 
         self.worker.finished.connect(self.thread.quit)
         self.worker.finished.connect(self.worker.deleteLater)
@@ -350,10 +438,40 @@ class SourcesAdvisorsScreen(WizardScreen):
 
         self.thread.start()
 
+    def _cancel_processing(self):
+        # Detaches this screen from the still-running worker so a
+        # log/progress/finished signal that arrives after this point
+        # can't touch UI the user has already navigated away from.
+        # thread.quit()/deleteLater() stay connected (not disconnected
+        # here), so the abandoned thread still cleans itself up normally
+        # once finish_sources() returns instead of being leaked.
+        if self.worker is not None:
+            self.worker.log.disconnect(self.log.append)
+            self.worker.progress.disconnect(self.on_progress)
+            self.worker.finished.disconnect(self._on_finished)
+
+        self.show_form(preserve_selection=True)
+
+    def on_progress(self, current, total):
+        # Stays indeterminate (see _show_processing()) until the first
+        # real progress report arrives -- EMX/BD ordering runs as two
+        # separate stages (see get_emx_order()/get_bd_order() in
+        # scanner.py), each restarting its own current/total from 1, so
+        # this can jump backward once when the second stage begins; the
+        # log lines around each call already announce that transition.
+        self.progress.setMaximum(total)
+        self.progress.setValue(current)
+
     def _on_finished(self, sources):
         if sources is None:
             self.status_label.setText("Something went wrong — check details below.")
-            self.set_back(visible=True)
+            # Back was repointed at _cancel_processing (and relabeled
+            # "Cancel") for the duration of the run -- point it back at
+            # the normal handler now that the worker's actually done,
+            # same as show_form() does; otherwise a click here would try
+            # to disconnect signals on a worker Qt's about to delete.
+            self.back_button.setText("Back")
+            self.set_back(callback=self._on_back, visible=True)
             self.set_primary(text="Try Again", enabled=True, callback=self.show_form, visible=True)
             return
 

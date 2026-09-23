@@ -35,7 +35,7 @@ class PDFReader:
     #     print(f"Successfully split {doc.name} into {len(doc)} pages.")
     #     doc.close()
             
-    def split_pages(self):
+    def split_pages(self, log=None):
         doc = pymupdf.open(self.pdf_path)
         base_name = Path(doc.name).stem
 
@@ -43,7 +43,11 @@ class PDFReader:
         output_dir = self.import_path / base_name
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        for page_num in range(len(doc)):
+        total = len(doc)
+        if log:
+            log(f"Splitting {base_name} into {total} page{'s' if total != 1 else ''}…")
+
+        for page_num in range(total):
             new_pdf = pymupdf.open()
             new_pdf.insert_pdf(doc, from_page=page_num, to_page=page_num)
 
@@ -55,6 +59,6 @@ class PDFReader:
 
         print(f"Successfully split {doc.name} into {len(doc)} pages in {output_dir}.")
         doc.close()
-        
+
         return output_dir
             

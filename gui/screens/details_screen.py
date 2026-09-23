@@ -56,7 +56,7 @@ class DetailsScreen(WizardScreen):
         layout.addWidget(self.use_target_date)
 
         self.target_date_field = QDateEdit()
-        self.target_date_field.setCalendarPopup(False)
+        self.target_date_field.setCalendarPopup(True)
         self.target_date_field.setDisplayFormat("MMMM d, yyyy")
         self.target_date_field.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.target_date_field.setEnabled(False)
