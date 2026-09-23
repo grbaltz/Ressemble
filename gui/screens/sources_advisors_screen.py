@@ -30,10 +30,17 @@ class SourcesAdvisorsScreen(WizardScreen):
     Submitting swaps to an inline processing state (ordering the sources,
     persisting the advisor combination) and goes straight to Details when
     done -- it never bounces back through the Scan screen.
+
+    Both source files are optional, independently of each other: not every
+    meeting includes a financial plan update or a performance review, and
+    a report can be run with neither. Leaving one out drops that whole
+    section from the assembled report rather than leaving its placeholder
+    pages in -- see SECTION_SLOTS in src/assembler.py. Only the advisor
+    selection is actually required to continue.
     """
 
     def __init__(self, main_window, settings):
-        super().__init__("Sources & Advisors", "Choose this client's EMX and Black Diamond files, and the assigned advisors.")
+        super().__init__("Sources & Advisors", "Choose the assigned advisors, plus this client's EMX and Black Diamond files if the report includes them.")
         self.main_window = main_window
         self.settings = settings
 
@@ -70,31 +77,56 @@ class SourcesAdvisorsScreen(WizardScreen):
         section_label.setProperty("class", "section")
         container.addWidget(section_label)
 
-        self.emx_field, emx_row = self._build_source_row("EMX file", EMX_EXTENSIONS, self._choose_emx)
+        self.emx_field, emx_row = self._build_source_row(
+            "EMX file", EMX_EXTENSIONS, self._choose_emx, self._clear_emx
+        )
         self.emx_field.file_dropped.connect(self._set_emx)
         container.addLayout(emx_row)
 
-        self.bd_field, bd_row = self._build_source_row("Black Diamond file", BD_EXTENSIONS, self._choose_bd)
+        self.bd_field, bd_row = self._build_source_row(
+            "Black Diamond file", BD_EXTENSIONS, self._choose_bd, self._clear_bd
+        )
         self.bd_field.file_dropped.connect(self._set_bd)
         container.addLayout(bd_row)
+
+        # Both files are optional, which isn't obvious from two empty
+        # fields sitting above a Continue button that's already enabled.
+        hint = QLabel(
+            "Both files are optional — leave one out and that section is omitted from the report entirely."
+        )
+        hint.setProperty("class", "status")
+        hint.setWordWrap(True)
+        container.addWidget(hint)
 
         widget = QWidget()
         widget.setLayout(container)
         return widget
 
-    def _build_source_row(self, placeholder, extensions, on_browse):
+    def _build_source_row(self, placeholder, extensions, on_browse, on_clear):
         field = FileDropLineEdit(extensions)
         field.setReadOnly(True)
-        field.setPlaceholderText(f"No {placeholder.lower()} selected -- drag a file here or browse")
+        field.setPlaceholderText(f"No {placeholder.lower()} selected (optional) -- drag a file here or browse")
 
         browse = QPushButton("Browse…")
         browse.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         browse.clicked.connect(on_browse)
 
+        # The field is read-only, so without this a file picked by mistake
+        # couldn't be taken back out -- which matters now that running
+        # with no EMX/BD file at all is a legitimate choice rather than
+        # just an unfinished form.
+        clear = QPushButton("Clear")
+        clear.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        clear.setVisible(False)
+        clear.clicked.connect(on_clear)
+
         row = QHBoxLayout()
         row.setSpacing(8)
         row.addWidget(field, 1)
         row.addWidget(browse)
+        row.addWidget(clear)
+
+        field.clear_button = clear
         return field, row
 
     def _build_advisors_section(self):
@@ -195,14 +227,22 @@ class SourcesAdvisorsScreen(WizardScreen):
             self._set_bd(filename)
 
     def _set_emx(self, filename):
-        self._emx_path = filename
-        self.emx_field.setText(filename)
+        self._emx_path = filename or None
+        self.emx_field.setText(filename or "")
+        self.emx_field.clear_button.setVisible(bool(filename))
         self._validate()
 
     def _set_bd(self, filename):
-        self._bd_path = filename
-        self.bd_field.setText(filename)
+        self._bd_path = filename or None
+        self.bd_field.setText(filename or "")
+        self.bd_field.clear_button.setVisible(bool(filename))
         self._validate()
+
+    def _clear_emx(self):
+        self._set_emx(None)
+
+    def _clear_bd(self):
+        self._set_bd(None)
 
     def _browse(self, label, file_filter):
         filename, _ = QFileDialog.getOpenFileName(
@@ -256,7 +296,9 @@ class SourcesAdvisorsScreen(WizardScreen):
         self.advisor_list.blockSignals(False)
 
     def _validate(self):
-        ready = bool(self._emx_path) and bool(self._bd_path) and len(self._selected_advisors()) > 0
+        # The EMX and BD files are deliberately not part of this -- a
+        # report with neither is a valid report (see the class docstring).
+        ready = len(self._selected_advisors()) > 0
         self.set_primary(enabled=ready)
 
     def show_form(self, preserve_selection=True):
@@ -264,7 +306,7 @@ class SourcesAdvisorsScreen(WizardScreen):
         self.form_widget.setVisible(True)
         self.processing_widget.setVisible(False)
         self.set_title("Sources & Advisors")
-        self.set_subtitle("Choose this client's EMX and Black Diamond files, and the assigned advisors.")
+        self.set_subtitle("Choose the assigned advisors, plus this client's EMX and Black Diamond files if the report includes them.")
         self.set_primary("Continue", callback=self._on_continue, visible=True)
         self.set_back(visible=True)
         self._validate()
@@ -326,8 +368,6 @@ class SourcesAdvisorsScreen(WizardScreen):
         self.main_window.stack.setCurrentWidget(self.main_window.scan_screen)
 
     def reset(self):
-        self._emx_path = None
-        self._bd_path = None
-        self.emx_field.clear()
-        self.bd_field.clear()
+        self._clear_emx()
+        self._clear_bd()
         self.show_form(preserve_selection=False)

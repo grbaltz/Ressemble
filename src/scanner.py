@@ -37,13 +37,43 @@ def clear_directory(directory_path):
         else:
             item.unlink()
 
+def invalidate_cached_template():
+    """Clears template.json's filename/pages/sources -- the fields the
+    cache shortcut at the top of scan_template() trusts to skip a real
+    rescan -- while keeping the advisors roster (advisors_source/
+    advisor_names, see src/advisors.py) and the tear sheets roster
+    (tear_sheets_source/tear_sheet_models, see src/tear_sheets.py), both
+    of which are independent of the report template and shouldn't be
+    invalidated by a template change.
+    """
+    try:
+        with open(TEMPLATE_CONFIG_PATH) as f:
+            old_template = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        old_template = {}
+
+    preserved = {
+        key: old_template[key]
+        for key in ("advisors_source", "advisor_names", "tear_sheets_source", "tear_sheet_models")
+        if key in old_template
+    }
+
+    with open(TEMPLATE_CONFIG_PATH, "w") as f:
+        json.dump(preserved, f)
+
 def scan_template(pdf, refresh, log, progress, request_label):
-    """Fingerprints every page of the report template, prompting for a
-    label on any page that's new. This is the only part of preparing a
-    report that touches the template PDF itself -- EMX/BD and the
-    advisors selection are gathered later, independently (see
-    finish_sources() and src/advisors.py), so this can finish and hand
-    off to Details/Compile without ever needing those.
+    """Fingerprints every page of the report template. This is the only
+    part of preparing a report that touches the template PDF itself --
+    EMX/BD and the advisors selection are gathered later, independently
+    (see finish_sources() and src/advisors.py), so this can finish and
+    hand off to Details/Compile without ever needing those.
+
+    A new page no longer blocks the scan waiting on a user-provided label
+    -- see the note above request_labels() -- so `request_label` is
+    unused here now. It's kept as a parameter (and ScanWorker/ScanScreen
+    still wire a real callback through it) purely so that flow can be
+    reconnected later without threading a new parameter back through the
+    worker/GUI call chain.
 
     Skipped entirely when the template hasn't changed since the last
     successful scan (same filename, and a cached scan actually on file) --
@@ -65,22 +95,23 @@ def scan_template(pdf, refresh, log, progress, request_label):
 
     print(f"Report from GUI: {pdf}")
 
+    # About to clear_directory(BASE_DATA_PATH) below, which wipes every
+    # split-page directory under it -- not just this template's, but any
+    # other template's (and EMX/BD's) too, since they all share that one
+    # root. invalidate_cached_template() drops template.json's own
+    # filename/pages/sources before that happens, so if this scan is
+    # abandoned without ever reaching finish_sources() (which is what
+    # rewrites them for real, via save_template()), the cache shortcut
+    # above can't later trust a stale "unchanged" filename match and hand
+    # back paths this clear_directory() call just deleted.
+    invalidate_cached_template()
+
     doc = PDFReader(pdf)
     clear_directory(BASE_DATA_PATH)
     split_dir = doc.split_pages()
 
-    new_template = refresh or is_new_template(pdf)
-
     # match pages in template to existing (basically check if new template)
     matched_pages, new_page_ids = match_pages(pdf, split_dir, log, progress)
-
-    if new_template or len(new_page_ids) > 0:
-        request_labels(
-            matched_pages,
-            new_page_ids,
-            log,
-            request_label,
-        )
 
     return matched_pages
 
@@ -145,33 +176,27 @@ def match_pages(pdf, match_dir, log=None, progress=None):
 
     return matched_pages, new_page_ids
         
+# Not called from scan_template() anymore -- new pages no longer block
+# the scan waiting on a user-typed label (its "id"/"label" fields, see
+# fingerprint_page(), are otherwise unused by report assembly, which
+# drives entirely off "slot" -- see src/assembler.py). Left in place,
+# still fully wired end-to-end (ScanWorker.get_label()/receive_label(),
+# ScanScreen.request_label(), gui/dialogs/label_dialog.py), so the label
+# prompt can be reconnected later by re-adding the call in
+# scan_template() rather than rebuilding this flow from scratch.
 def request_labels(
     matched_pages,
     new_page_ids,
     log,
     request_label
 ):
-    # Refresh and reset the template -- but keep the advisors roster
-    # (advisors_source/advisor_names, see src/advisors.py) and the tear
-    # sheets roster (tear_sheets_source/tear_sheet_models, see
-    # src/tear_sheets.py), both of which are independent of the report
-    # template and shouldn't be invalidated by a template change.
+    # scan_template() already calls invalidate_cached_template() itself
+    # before this would run -- redundant here now, but harmless (it's
+    # idempotent), and keeps this function correct standalone if it's
+    # ever reconnected on its own.
     log("Refreshing")
-    try:
-        with open(TEMPLATE_CONFIG_PATH) as f:
-            old_template = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        old_template = {}
+    invalidate_cached_template()
 
-    preserved = {
-        key: old_template[key]
-        for key in ("advisors_source", "advisor_names", "tear_sheets_source", "tear_sheet_models")
-        if key in old_template
-    }
-
-    with open(TEMPLATE_CONFIG_PATH, "w") as template:
-        json.dump(preserved, template)
-            
     with open(PAGES_CONFIG_PATH) as f:
         pages = json.load(f)
 
@@ -195,42 +220,47 @@ def request_labels(
         json.dump(pages, f)
         
 def request_source_files(log, emx_pdf, blackdiamond_pdf):
+    """Resolves the two client-specific source PDFs into the split-page
+    directories the assembler reads from.
+
+    Either one may be left out: a meeting with no financial plan update
+    has no EMX file, and one with no performance review has no Black
+    Diamond file. An omitted source is recorded as None all the way
+    through, and assemble_report() drops that whole section of the report
+    rather than leaving its placeholder pages behind.
+    """
     log("Selecting EMX and BlackDiamond PDFs...")
 
-    if Path(emx_pdf).suffix.lower() in (".doc", ".docx"):
+    if not emx_pdf:
+        log("No EMX file provided -- the report will be built without its section.")
+
+    if not blackdiamond_pdf:
+        log("No Black Diamond file provided -- the report will be built without its section.")
+
+    if emx_pdf and Path(emx_pdf).suffix.lower() in (".doc", ".docx"):
         log("Converting EMX Word document to PDF and removing bold styling from page 1…")
         emx_pdf = prepare_emx_source(emx_pdf)
 
-    with Path(emx_pdf) as emx_dir, Path(blackdiamond_pdf) as blackdiamond_dir:
-        print(f"emx_dir: {emx_dir.stem}, bd_dir: {blackdiamond_dir.stem}")
-        return {
-            "emx_pdf": emx_pdf,
-            "emx_dir": str(Path(BASE_DATA_PATH / emx_dir.stem)),
-            "blackdiamond_pdf": blackdiamond_pdf,
-            "blackdiamond_dir": str(Path(BASE_DATA_PATH / blackdiamond_dir.stem)),
-        }
+    return {
+        "emx_pdf": emx_pdf or None,
+        "emx_dir": str(BASE_DATA_PATH / Path(emx_pdf).stem) if emx_pdf else None,
+        "blackdiamond_pdf": blackdiamond_pdf or None,
+        "blackdiamond_dir": str(BASE_DATA_PATH / Path(blackdiamond_pdf).stem) if blackdiamond_pdf else None,
+    }
     
-# Scan pages, store them, and compare them to previously scanned
-# pages in order to match prior page orders and detect
-# new pages/slides
-#
-# Returns True if matched
-def fingerprint_page(page, filename):
-    # get normalized and stabilized text
-    text = page.get_text()
-    normalized = normalize(text)
-    stabilized = stabilize(normalized)
+def detect_slot(stabilized):
+    """Maps a page's stabilized text onto the slot assemble_report() uses
+    to decide what that page becomes in the final report. "" means an
+    ordinary page that's copied through as-is.
+
+    Kept separate from fingerprint_page() so it can also be re-applied to
+    already-fingerprinted pages (see backfill_slots()) -- a page scanned
+    before a rule existed has its stored clean_text but no slot, and
+    re-running the rules over that text is enough to fill it in without
+    forcing a full rescan of the template.
+    """
     slot = ""
 
-    # is image only page: no text
-    is_image_page = len(text.strip()) == 0
-    
-    # get keywords
-    keywords = parse_keywords(stabilized)
-    
-    # get headings
-    headings = parse_headings(page)
-    
     # check for specific page criteria
     # cover
     if re.search(r'household presentation for date', stabilized, re.IGNORECASE):
@@ -239,6 +269,27 @@ def fingerprint_page(page, filename):
     # advisors
     if re.search(r'your rebalance team', stabilized, re.IGNORECASE):
         slot = "advisors"
+
+    # The section divider introducing the EMX pages -- a title-only slide
+    # reading just "Plan 360", which stabilize() turns into "plan
+    # <number>". Anchored so it can't also catch the pages that merely
+    # mention Plan 360 in a sentence (the Plan 360 disclaimer, the
+    # agenda).
+    if re.fullmatch(r"plan\s*<number>", stabilized.strip(), re.IGNORECASE):
+        slot = "plan360Title"
+
+    # Plan 360's own disclaimer page, distinct from the generic
+    # performance-data disclaimer -- both exist in the template, only
+    # this one is tied to the "Include Plan 360" checkbox on Details.
+    if re.search(r"rebalance plan\s*<number>\s*disclaimer", stabilized, re.IGNORECASE):
+        slot = "plan360Disclaimer"
+
+    # The agenda -- kept as its own slot (rather than falling through as
+    # an ordinary unslotted page) so assemble_report() can strip its
+    # "Plan 360" bullet when that checkbox is unchecked, without dropping
+    # the rest of the page.
+    if re.search(r"agenda.*plan\s*<number>", stabilized, re.IGNORECASE):
+        slot = "agenda"
 
     # emx automatic
     if re.search(r"EMX financial plan", stabilized, re.IGNORECASE) and re.search(r"Cash Flow Report and Net Worth Statement", stabilized, re.IGNORECASE):
@@ -276,6 +327,56 @@ def fingerprint_page(page, filename):
     # bd header page
 
     #
+
+    return slot
+
+
+def backfill_slots(pages):
+    """Fills in the slot of any already-fingerprinted page that doesn't
+    have one, by re-running detect_slot() over its stored clean_text.
+
+    Without this, a page scanned before a slot rule was added keeps its
+    empty slot until the template is rescanned from scratch -- and the
+    scan is deliberately cached across runs (see scan_template), so that
+    might never happen. Only ever fills an empty slot: a slot already on
+    file wins, exactly as in fingerprint_page().
+    """
+    changed = False
+
+    for page in pages.values():
+        if page.get("slot"):
+            continue
+
+        slot = detect_slot(page.get("clean_text") or "")
+
+        if slot:
+            page["slot"] = slot
+            changed = True
+
+    return changed
+
+
+# Scan pages, store them, and compare them to previously scanned
+# pages in order to match prior page orders and detect
+# new pages/slides
+#
+# Returns True if matched
+def fingerprint_page(page, filename):
+    # get normalized and stabilized text
+    text = page.get_text()
+    normalized = normalize(text)
+    stabilized = stabilize(normalized)
+
+    # is image only page: no text
+    is_image_page = len(text.strip()) == 0
+    
+    # get keywords
+    keywords = parse_keywords(stabilized)
+    
+    # get headings
+    headings = parse_headings(page)
+    
+    slot = detect_slot(stabilized)
 
     image_hash = None
 
@@ -481,6 +582,14 @@ def save_template(pdf, matched_pages, sources):
     with open(PAGES_CONFIG_PATH) as f:
         pages = json.load(f)
 
+    # The template scan is cached across runs, so a page fingerprinted
+    # before a slot rule existed would otherwise keep its empty slot
+    # forever. Re-deriving from the stored clean_text costs nothing and
+    # keeps template.json correct without forcing a rescan.
+    if backfill_slots(pages):
+        with open(PAGES_CONFIG_PATH, "w") as f:
+            json.dump(pages, f)
+
     # Merge into whatever's already there rather than replacing the whole
     # file -- the advisors roster (advisors_source/advisor_names, see
     # src/advisors.py) is cached in this same file and is independent of
@@ -513,7 +622,7 @@ def get_emx_order():
     with open(TEMPLATE_CONFIG_PATH, "r") as t:
         template = json.load(t)
     
-    if not template["sources"]["emx_pdf"]:
+    if not (template.get("sources") or {}).get("emx_pdf"):
         print("No emx file saved")
         return
     
@@ -527,7 +636,7 @@ def get_bd_order():
     with open(TEMPLATE_CONFIG_PATH, "r") as t:
         template = json.load(t)
     
-    if not template["sources"]["blackdiamond_pdf"]:
+    if not (template.get("sources") or {}).get("blackdiamond_pdf"):
         print("No blackdiamond file saved")
         return
     

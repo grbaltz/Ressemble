@@ -71,6 +71,25 @@ class ScanScreen(FileDropTargetMixin, WizardScreen):
         self.change_file_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.change_file_button.clicked.connect(self.choose_pdf)
 
+        # Forces a real rescan of the *current* template file -- bypassing
+        # the "unchanged, reuse the cached scan" shortcut in
+        # scan_template() -- without having to reselect it via "Use a
+        # different file…". Available whichever of the screen's end
+        # states (scan complete, or cancelled) it's clicked from; disabled
+        # only while a scan is actively running, same as Continue below,
+        # since ScanWorker has no way to cancel an in-flight scan and
+        # starting a second one concurrently would have both threads
+        # reading/writing pages.json and template.json at once.
+        self.rescan_button = QPushButton("Rescan")
+        self.rescan_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.rescan_button.clicked.connect(self.rescan_pdf)
+
+        change_file_row = QHBoxLayout()
+        change_file_row.setSpacing(8)
+        change_file_row.addWidget(self.change_file_button)
+        change_file_row.addWidget(self.rescan_button)
+        change_file_row.addStretch(1)
+
         self.advisors_label = QLabel("ADVISORS FILE")
         self.advisors_label.setProperty("class", "section")
 
@@ -115,7 +134,7 @@ class ScanScreen(FileDropTargetMixin, WizardScreen):
 
         self.content_layout.addWidget(self.status_label)
         self.content_layout.addWidget(self.progress)
-        self.content_layout.addWidget(self.change_file_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.content_layout.addLayout(change_file_row)
         self.content_layout.addWidget(self.advisors_label)
         self.content_layout.addLayout(advisors_row)
         self.content_layout.addWidget(self.advisors_status_label)
@@ -147,6 +166,9 @@ class ScanScreen(FileDropTargetMixin, WizardScreen):
     def start_with(self, pdf_path):
         self._pdf_path = pdf_path
         self.scan_pdf()
+
+    def rescan_pdf(self):
+        self.scan_pdf(refresh=True)
 
     def choose_pdf(self):
         filename, _ = QFileDialog.getOpenFileName(
@@ -257,6 +279,7 @@ class ScanScreen(FileDropTargetMixin, WizardScreen):
         self.progress.setValue(0)
         self.log.clear()
         self.set_primary(enabled=False)
+        self.rescan_button.setEnabled(False)
         self.change_file_button.setText("Use a different file…")
 
         self.thread = QThread()
@@ -290,6 +313,7 @@ class ScanScreen(FileDropTargetMixin, WizardScreen):
         self.main_window.pdf_path = self._pdf_path
         self.main_window.matched_pages = matched_pages
         self.progress.setMaximum(1)
+        self.rescan_button.setEnabled(True)
 
         if matched_pages is None:
             # A cancellation (label dialog dismissed) unwinds scan_template()

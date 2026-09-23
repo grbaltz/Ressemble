@@ -116,6 +116,7 @@ class CompileScreen(WizardScreen):
             enrolled=self.main_window.enrolled,
             target_date=self.main_window.target_date,
             include_page_numbers=self.main_window.include_page_numbers,
+            include_plan_360=self.main_window.include_plan_360,
         )
 
         self.worker.moveToThread(self.thread)

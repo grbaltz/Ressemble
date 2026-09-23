@@ -29,6 +29,7 @@ class MainWindow(QMainWindow):
         self.target_date = None
         self.enrolled = False
         self.include_page_numbers = True
+        self.include_plan_360 = True
 
         self.stack = QStackedWidget()
 
@@ -75,6 +76,7 @@ class MainWindow(QMainWindow):
         self.target_date = None
         self.enrolled = False
         self.include_page_numbers = True
+        self.include_plan_360 = True
 
         # matched_pages/pdf_path deliberately survive a restart -- the
         # template was already scanned and hasn't changed, so there's

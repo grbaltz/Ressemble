@@ -11,6 +11,7 @@ class DetailsScreen(WizardScreen):
 
         self.content_layout.addWidget(self._build_client_name())
         self.content_layout.addWidget(self._build_target_date())
+        self.content_layout.addWidget(self._build_plan_360())
         self.content_layout.addWidget(self._build_enrolled())
         self.content_layout.addWidget(self._build_page_numbers())
 
@@ -60,6 +61,25 @@ class DetailsScreen(WizardScreen):
         self.target_date_field.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.target_date_field.setEnabled(False)
         layout.addWidget(self.target_date_field)
+
+        widget.setLayout(layout)
+        return widget
+
+    def _build_plan_360(self):
+        from PySide6.QtWidgets import QWidget
+        widget = QWidget()
+        layout = QVBoxLayout()
+        layout.setSpacing(6)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        label = QLabel("PLAN 360")
+        label.setProperty("class", "section")
+        layout.addWidget(label)
+
+        self.plan_360_checkbox = QCheckBox("Include Plan 360")
+        self.plan_360_checkbox.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.plan_360_checkbox.setChecked(True)
+        layout.addWidget(self.plan_360_checkbox)
 
         widget.setLayout(layout)
         return widget
@@ -116,6 +136,7 @@ class DetailsScreen(WizardScreen):
         self.main_window.client_name = self.client_name_field.text().strip()
         self.main_window.enrolled = self.enrolled_checkbox.isChecked()
         self.main_window.include_page_numbers = self.page_numbers_checkbox.isChecked()
+        self.main_window.include_plan_360 = self.plan_360_checkbox.isChecked()
 
         if self.use_target_date.isChecked():
             self.main_window.target_date = self.target_date_field.date().toPython()
@@ -132,6 +153,7 @@ class DetailsScreen(WizardScreen):
     def reset(self):
         self.client_name_field.clear()
         self.use_target_date.setChecked(False)
+        self.plan_360_checkbox.setChecked(True)
         self.enrolled_checkbox.setChecked(False)
         self.page_numbers_checkbox.setChecked(True)
         self._set_default_date()

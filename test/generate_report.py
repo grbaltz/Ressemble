@@ -24,6 +24,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--client-name", default="Fullan", help="Household name for the cover page (default: Fullan)")
     parser.add_argument("--enrolled", action="store_true", help="Use the View360 'enrolled' page instead of the enrollment pitch page")
+    parser.add_argument("--no-plan-360", action="store_true", help="Omit the Plan 360 title/disclaimer pages and the agenda's Plan 360 line")
     parser.add_argument("--target-date", default=None, help="YYYY-MM-DD to print on the cover instead of next Monday")
     args = parser.parse_args()
 
@@ -36,6 +37,7 @@ def main():
         client_name=args.client_name,
         enrolled=args.enrolled,
         target_date=target_date,
+        include_plan_360=not args.no_plan_360,
     )
 
     print(f"\nReport generated: {report_path}")
