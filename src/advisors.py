@@ -194,7 +194,7 @@ def advisor_combo_file(selected_names):
     isn't guaranteed to have a matching pre-designed page.
 
     Deduplicates and drops blanks before matching -- selected_names may
-    come straight from the Advisor 1/2/3/Service Advisor dropdowns, which
+    come straight from the Advisor 1/2/3/Service dropdowns, which
     (unlike the old checkbox list) can have the same name picked twice or
     a slot left unset. Two dropdowns pointing at the same person is just a
     3-person team with a redundant pick, not automatically "no page for
@@ -209,3 +209,45 @@ def advisor_combo_file(selected_names):
     slug = "_".join(slugify_advisor_name(name) for name in sorted(names))
     combo_pdf = ADVISORS_PATH / f"{slug}.pdf"
     return combo_pdf if combo_pdf.exists() else None
+
+
+# Each team member is classified once, by the user, as either an advisor
+# (eligible for the Advisor 1/2/3 dropdowns) or service (eligible for the
+# Service dropdown) -- nothing on the team pages themselves reliably says
+# which. Keyed by name rather than tied to a particular advisors file, so
+# a classification survives re-providing (or replacing) the team pages
+# and is only asked for again for someone never seen before.
+ROLE_ADVISOR = "advisor"
+ROLE_SERVICE = "service"
+
+
+def load_advisor_roles():
+    """{name -> ROLE_ADVISOR | ROLE_SERVICE} for everyone classified so far."""
+    try:
+        with open(TEMPLATE_CONFIG_PATH) as f:
+            template = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    return template.get("advisor_roles", {})
+
+
+def save_advisor_roles(roles):
+    """Merges roles into the persisted name -> role map."""
+    try:
+        with open(TEMPLATE_CONFIG_PATH) as f:
+            template = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        template = {}
+
+    template["advisor_roles"] = {**template.get("advisor_roles", {}), **roles}
+
+    with open(TEMPLATE_CONFIG_PATH, "w") as f:
+        json.dump(template, f)
+
+
+def unclassified_advisors(names=None):
+    """The subset of names (default: the cached roster) with no saved role yet."""
+    if names is None:
+        _, names = load_cached_advisors()
+    roles = load_advisor_roles()
+    return [name for name in names if name not in roles]

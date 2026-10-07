@@ -14,14 +14,20 @@ from gui.widgets.wizard_screen import WizardScreen
 from gui.widgets.file_drop_line_edit import FileDropLineEdit
 from gui.widgets.collapsible import CollapsibleSection
 from gui.workers.finish_sources_worker import FinishSourcesWorker
-from src.advisors import load_cached_advisors, load_cached_advisor_combos, advisor_combo_file
+from src.advisors import load_cached_advisors, load_cached_advisor_combos, advisor_combo_file, load_advisor_roles, ROLE_ADVISOR, ROLE_SERVICE
 from pathlib import Path
-from itertools import zip_longest
 
 EMX_EXTENSIONS = {".pdf", ".doc", ".docx"}
 BD_EXTENSIONS = {".pdf"}
 
-ADVISOR_ROLES = ["Advisor 1", "Advisor 2", "Advisor 3", "Service Advisor"]
+# (label, which classified role is offered in that slot -- see
+# load_advisor_roles() in src/advisors.py)
+ADVISOR_ROLES = [
+    ("Advisor 1", ROLE_ADVISOR),
+    ("Advisor 2", ROLE_ADVISOR),
+    ("Advisor 3", ROLE_ADVISOR),
+    ("Service", ROLE_SERVICE),
+]
 
 NO_COMBO_WARNING = "This combination doesn't match an existing team page -- the report will fall back to a placeholder for it."
 
@@ -155,9 +161,9 @@ class SourcesAdvisorsScreen(WizardScreen):
 
         # Optional shortcut: pick a whole known team at once instead of
         # setting each of the four roles by hand. Selecting an entry just
-        # fills the role dropdowns below with that team's names (in
-        # whatever order load_cached_advisor_combos() -- ultimately
-        # split_advisors_pdf() -- found them in) and immediately resets
+        # fills the role dropdowns below with that team's names (advisors
+        # into Advisor 1/2/3, service into Service -- see
+        # _slot_assignment()) and immediately resets
         # itself back to blank, since it's a one-shot fill rather than a
         # selection that needs to stay in sync with hand-edits made
         # afterward.
@@ -189,11 +195,11 @@ class SourcesAdvisorsScreen(WizardScreen):
         self.advisor_rows = []
         advisors_grid = QVBoxLayout()
         advisors_grid.setSpacing(8)
-        for role in ADVISOR_ROLES:
+        for role_label, _ in ADVISOR_ROLES:
             row = QHBoxLayout()
             row.setSpacing(8)
 
-            label = QLabel(role)
+            label = QLabel(role_label)
             label.setFixedWidth(110)
             row.addWidget(label)
 
@@ -251,43 +257,79 @@ class SourcesAdvisorsScreen(WizardScreen):
         self._populate_advisors(names, previous)
 
     def _populate_advisors(self, names, previous):
-        for combo, prior_value in zip(self.advisor_combos, previous):
+        # Each slot only offers people classified into its role (see the
+        # Scan screen's per-member Advisor/Service prompt) -- anyone not
+        # yet classified isn't offered anywhere.
+        roles = load_advisor_roles()
+        for combo, (_, slot_role), prior_value in zip(self.advisor_combos, ADVISOR_ROLES, previous):
             combo.blockSignals(True)
             combo.clear()
             combo.addItem("", "")
             for name in names:
-                combo.addItem(name, name)
+                if roles.get(name) == slot_role:
+                    combo.addItem(name, name)
 
             index = combo.findData(prior_value) if prior_value else 0
             combo.setCurrentIndex(index if index >= 0 else 0)
             combo.blockSignals(False)
 
-        # Filtered to what actually fits the role dropdowns below -- a
-        # team page with more members than there are roles (not the case
-        # in any real data seen so far, but not guaranteed by anything)
-        # couldn't be fully applied by _on_quick_select_changed() anyway,
-        # so it's left out rather than offered and silently truncated.
-        combos = [c for c in load_cached_advisor_combos() if len(c) <= len(self.advisor_combos)]
+        # Filtered to teams that can actually be laid out in the role
+        # dropdowns below -- see _slot_assignment(). One with an
+        # unclassified member, or more advisors/service people than there
+        # are slots for, couldn't be fully applied by
+        # _on_quick_select_changed(), so it's left out rather than offered
+        # and silently truncated.
+        assignments = []
+        for combo_names in load_cached_advisor_combos():
+            slots = self._slot_assignment(combo_names, roles)
+            if slots is not None:
+                assignments.append((combo_names, slots))
+
         self.quick_select_combo.blockSignals(True)
         self.quick_select_combo.clear()
         self.quick_select_combo.addItem("", None)
-        for combo_names in combos:
-            self.quick_select_combo.addItem(", ".join(combo_names), combo_names)
+        for combo_names, slots in assignments:
+            self.quick_select_combo.addItem(", ".join(combo_names), slots)
         self.quick_select_combo.setCurrentIndex(0)
         self.quick_select_combo.blockSignals(False)
 
-        self.no_advisors_label.setVisible(not names)
-        self.quick_select_row_widget.setVisible(bool(combos))
+        classified = [name for name in names if name in roles]
+        unclassified = len(names) - len(classified)
+        if not names:
+            self.no_advisors_label.setText("No advisors available -- provide an advisors PDF on the previous screen.")
+        elif not classified:
+            self.no_advisors_label.setText("No team members have been classified as Advisor or Service yet -- use Edit Roles on the previous screen.")
+        elif unclassified:
+            plural = "s aren't" if unclassified != 1 else " isn't"
+            self.no_advisors_label.setText(f"{unclassified} team member{plural} classified yet and won't appear below -- use Edit Roles on the previous screen.")
+        self.no_advisors_label.setVisible(not classified or unclassified > 0)
+        self.quick_select_row_widget.setVisible(bool(assignments))
         for row_widget in self.advisor_rows:
-            row_widget.setVisible(bool(names))
+            row_widget.setVisible(bool(classified))
 
         self._update_combo_warning()
 
-    def _on_quick_select_changed(self):
-        combo_names = self.quick_select_combo.currentData()
+    @staticmethod
+    def _slot_assignment(combo_names, roles):
+        """One name (or "") per role dropdown, in ADVISOR_ROLES order, with
+        each of combo_names placed into the next free slot for its role --
+        or None if that can't be done."""
+        slots = [""] * len(ADVISOR_ROLES)
+        for name in combo_names:
+            free = [
+                i for i, (_, slot_role) in enumerate(ADVISOR_ROLES)
+                if slot_role == roles.get(name) and not slots[i]
+            ]
+            if not free:
+                return None
+            slots[free[0]] = name
+        return slots
 
-        if combo_names:
-            for role_combo, name in zip_longest(self.advisor_combos, combo_names, fillvalue=""):
+    def _on_quick_select_changed(self):
+        slots = self.quick_select_combo.currentData()
+
+        if slots:
+            for role_combo, name in zip(self.advisor_combos, slots):
                 role_combo.blockSignals(True)
                 index = role_combo.findData(name) if name else 0
                 role_combo.setCurrentIndex(index if index >= 0 else 0)
@@ -347,8 +389,7 @@ class SourcesAdvisorsScreen(WizardScreen):
         return filename
 
     def _advisor_slot_values(self):
-        """One entry per dropdown, in role order (Advisor 1/2/3, Service
-        Advisor) -- "" for a slot left on the blank placeholder. Duplicate
+        """One entry per dropdown, in role order (Advisor 1/2/3, Service) -- "" for a slot left on the blank placeholder. Duplicate
         names across slots are kept as-is; deduplication happens in
         advisor_combo_file(), not here."""
         return [combo.currentData() or "" for combo in self.advisor_combos]

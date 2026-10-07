@@ -93,7 +93,10 @@ SECTION_SLOTS = {
 PAGE_NUMBER_FONT_FILE = _resolve_arial()
 PAGE_NUMBER_COLOR = 0
 PAGE_NUMBER_SIZE = 8
-PAGE_NUMBER_MARGIN = 36
+# Right margin is tighter than the bottom one so the number sits clear of
+# template content near the bottom-right corner.
+PAGE_NUMBER_MARGIN_X = 12
+PAGE_NUMBER_MARGIN_Y = 12
 
 def assemble_report(log, progress, advisors_filename, client_name, enrolled, target_date=None, include_page_numbers=True, include_plan_360=True):
     print("assemble")
@@ -355,8 +358,8 @@ def add_page_numbers(pdf_path, skip_pages=1):
         label = str(page_num + 1)
         text_width = font.text_length(label, fontsize=PAGE_NUMBER_SIZE)
 
-        x = page.rect.width - PAGE_NUMBER_MARGIN - text_width
-        y = page.rect.height - PAGE_NUMBER_MARGIN
+        x = page.rect.width - PAGE_NUMBER_MARGIN_X - text_width
+        y = page.rect.height - PAGE_NUMBER_MARGIN_Y
 
         page.insert_text((x, y), label, fontname=fontname, fontsize=PAGE_NUMBER_SIZE, color=color)
 

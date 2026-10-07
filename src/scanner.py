@@ -41,7 +41,7 @@ def invalidate_cached_template():
     """Clears template.json's filename/pages/sources -- the fields the
     cache shortcut at the top of scan_template() trusts to skip a real
     rescan -- while keeping the advisors roster (advisors_source/
-    advisor_names/advisor_combos, see src/advisors.py) and the tear
+    advisor_names/advisor_combos/advisor_roles, see src/advisors.py) and the tear
     sheets roster (tear_sheets_source/tear_sheet_models, see
     src/tear_sheets.py), both of which are independent of the report
     template and shouldn't be invalidated by a template change.
@@ -58,6 +58,7 @@ def invalidate_cached_template():
             "advisors_source",
             "advisor_names",
             "advisor_combos",
+            "advisor_roles",
             "tear_sheets_source",
             "tear_sheet_models",
         )

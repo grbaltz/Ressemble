@@ -14,10 +14,11 @@ from gui.widgets.drag_drop import FileDropTargetMixin
 from gui.widgets.file_drop_line_edit import FileDropLineEdit
 from gui.workers.scan_worker import ScanWorker
 from gui.dialogs.label_dialog import LabelDialog
+from gui.dialogs.advisor_role_dialog import classify_advisors
 from pathlib import Path
 import json
 from src.paths import TEMPLATE_CONFIG_PATH
-from src.advisors import ensure_advisors_split, load_cached_advisors
+from src.advisors import ensure_advisors_split, load_cached_advisors, load_advisor_roles, unclassified_advisors, ROLE_ADVISOR, ROLE_SERVICE
 from src.tear_sheets import ensure_tear_sheets_split, load_cached_tear_sheets
 
 TEMPLATE_EXTENSIONS = {".pdf"}
@@ -102,10 +103,17 @@ class ScanScreen(FileDropTargetMixin, WizardScreen):
         self.advisors_browse_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.advisors_browse_button.clicked.connect(self.choose_advisors_pdf)
 
+        # Re-walks every team member, not just unclassified ones, so a
+        # wrong Advisor/Service pick can be corrected later.
+        self.advisors_roles_button = QPushButton("Edit Roles…")
+        self.advisors_roles_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.advisors_roles_button.clicked.connect(self._edit_advisor_roles)
+
         advisors_row = QHBoxLayout()
         advisors_row.setSpacing(8)
         advisors_row.addWidget(self.advisors_field, 1)
         advisors_row.addWidget(self.advisors_browse_button)
+        advisors_row.addWidget(self.advisors_roles_button)
 
         self.advisors_status_label = QLabel("")
         self.advisors_status_label.setProperty("class", "status")
@@ -220,12 +228,33 @@ class ScanScreen(FileDropTargetMixin, WizardScreen):
             self.advisors_status_label.setText(f"Couldn't read advisors from that file: {exc}")
             return
 
+        # Only people never classified before -- roles persist by name
+        # across sessions and across replacement team-pages files.
+        classify_advisors(unclassified_advisors(names), self)
+        self._set_advisors_status(names)
+
+    def _edit_advisor_roles(self):
+        _, names = load_cached_advisors()
+        classify_advisors(names, self, current_roles=load_advisor_roles())
         self._set_advisors_status(names)
 
     def _set_advisors_status(self, names):
+        self.advisors_roles_button.setEnabled(bool(names))
         if names:
+            roles = load_advisor_roles()
+            advisors = [name for name in names if roles.get(name) == ROLE_ADVISOR]
+            service = [name for name in names if roles.get(name) == ROLE_SERVICE]
+            unclassified = [name for name in names if name not in roles]
+
             plural = "s" if len(names) != 1 else ""
-            self.advisors_status_label.setText(f"{len(names)} advisor{plural} found: {', '.join(names)}")
+            lines = [f"{len(names)} team member{plural} found."]
+            if advisors:
+                lines.append(f"Advisors: {', '.join(advisors)}")
+            if service:
+                lines.append(f"Service: {', '.join(service)}")
+            if unclassified:
+                lines.append(f"Not yet classified: {', '.join(unclassified)}")
+            self.advisors_status_label.setText("\n".join(lines))
         elif self.advisors_field.text():
             self.advisors_status_label.setText("No advisors found in that file.")
         else:
@@ -331,6 +360,15 @@ class ScanScreen(FileDropTargetMixin, WizardScreen):
         self.set_primary(enabled=True, callback=self._on_continue)
 
     def _on_continue(self):
+        # Catches a roster cached before roles existed, or prompts that
+        # were skipped earlier -- anyone left unclassified won't appear in
+        # any of the Sources & Advisors dropdowns.
+        unclassified = unclassified_advisors()
+        if unclassified:
+            classify_advisors(unclassified, self)
+            _, names = load_cached_advisors()
+            self._set_advisors_status(names)
+
         self.main_window.sources_advisors_screen.show_form()
         self.main_window.stack.setCurrentWidget(self.main_window.sources_advisors_screen)
 
