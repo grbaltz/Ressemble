@@ -163,10 +163,10 @@ class SourcesAdvisorsScreen(WizardScreen):
         # setting each of the four roles by hand. Selecting an entry just
         # fills the role dropdowns below with that team's names (advisors
         # into Advisor 1/2/3, service into Service -- see
-        # _slot_assignment()) and immediately resets
-        # itself back to blank, since it's a one-shot fill rather than a
-        # selection that needs to stay in sync with hand-edits made
-        # afterward.
+        # _slot_assignment()). It then keeps showing whichever team the
+        # role dropdowns currently add up to -- a hand-edit there
+        # reselects the matching team, or blanks this if none matches
+        # (see _sync_quick_select()).
         quick_select_row = QHBoxLayout()
         quick_select_row.setSpacing(8)
 
@@ -292,6 +292,7 @@ class SourcesAdvisorsScreen(WizardScreen):
             self.quick_select_combo.addItem(", ".join(combo_names), slots)
         self.quick_select_combo.setCurrentIndex(0)
         self.quick_select_combo.blockSignals(False)
+        self._sync_quick_select()
 
         classified = [name for name in names if name in roles]
         unclassified = len(names) - len(classified)
@@ -335,15 +336,26 @@ class SourcesAdvisorsScreen(WizardScreen):
                 role_combo.setCurrentIndex(index if index >= 0 else 0)
                 role_combo.blockSignals(False)
 
-            # One-shot fill -- reset immediately rather than leaving this
-            # showing a team name that a subsequent hand-edit to one of
-            # the role dropdowns would silently make inaccurate.
-            self.quick_select_combo.blockSignals(True)
-            self.quick_select_combo.setCurrentIndex(0)
-            self.quick_select_combo.blockSignals(False)
-
         self._update_combo_warning()
         self._validate()
+
+    def _sync_quick_select(self):
+        """Points the Team Page dropdown at the team the role dropdowns
+        currently add up to -- compared as a set of names, since a
+        hand-built team may sit in different slots than _slot_assignment()
+        would put it -- or at the blank entry if no listed team matches."""
+        selected = set(self._selected_advisors())
+        index = 0
+        if selected:
+            for i in range(1, self.quick_select_combo.count()):
+                slots = self.quick_select_combo.itemData(i)
+                if {name for name in slots if name} == selected:
+                    index = i
+                    break
+
+        self.quick_select_combo.blockSignals(True)
+        self.quick_select_combo.setCurrentIndex(index)
+        self.quick_select_combo.blockSignals(False)
 
     def _choose_emx(self):
         # A .doc/.docx EMX source gets converted to PDF (and fully debolded)
@@ -398,6 +410,7 @@ class SourcesAdvisorsScreen(WizardScreen):
         return [name for name in self._advisor_slot_values() if name]
 
     def _on_advisor_combo_changed(self):
+        self._sync_quick_select()
         self._update_combo_warning()
         self._validate()
 

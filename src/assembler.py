@@ -294,17 +294,35 @@ def assemble_report(log, progress, advisors_filename, client_name, enrolled, tar
                     # adjacent to its first occurrence; it still only
                     # gets a tear sheet that first time, however many
                     # accounts later the repeat turns up.
-                    seen_models = set()
+                    #
+                    # Accounts with no tear sheet (no model found, or a
+                    # model like 70/30 with no tear sheet file) all go
+                    # first, so they aren't wedged in among the tear-sheet
+                    # pie charts; each group keeps the sorted order.
+                    tear_sheets = {}
+                    without_sheet, with_sheet = [], []
                     for p in sorted_pages:
                         model = extract_account_model(p)
 
                         if not model:
                             print(f"no model found on {p}")
-                        elif model not in seen_models:
+                        elif model not in tear_sheets:
+                            tear_sheets[model] = find_tear_sheet_for_model(model)
+
+                        if model and tear_sheets[model]:
+                            with_sheet.append((p, model))
+                        else:
+                            without_sheet.append(p)
+
+                    for p in without_sheet:
+                        print(f"page {str(p)}")
+                        report_pages.append(str(p))
+
+                    seen_models = set()
+                    for p, model in with_sheet:
+                        if model not in seen_models:
                             seen_models.add(model)
-                            tear_sheet = find_tear_sheet_for_model(model)
-                            if tear_sheet:
-                                report_pages.append(str(tear_sheet))
+                            report_pages.append(str(tear_sheets[model]))
 
                         print(f"page {str(p)}")
                         report_pages.append(str(p))
@@ -492,59 +510,36 @@ def remove_agenda_plan360_line(pdf_path):
     rows_below = bullet_rows[target_index + 1:]
     shift = (rows_below[0]["y"] - target_row["y"]) if rows_below else 0
 
-    # insert_text() below needs each font actually registered on this page
-    # under that name -- giving it just the name string the span already
-    # reports (as replace_text_with_formatting() does when it's passed an
-    # explicit font_file) isn't enough on its own, unless that name happens
-    # to be a builtin base-14 font, which these custom template fonts
-    # aren't. Pulling the font program directly out of the document (by
-    # matching each span's reported name against the page's own font
-    # list) means this doesn't depend on having a font *file* available --
-    # unlike AVENIR_BLACK_FONT_FILE/TIMES_NEW_ROMAN_FONT_FILE elsewhere in
-    # this module, there's no bundled copy of AGaramondPro to fall back on.
-    fonts_needed = {span["font"] for row in rows_below for span in row["spans"]}
-    font_buffers = {}
-    for xref, ext, subtype, basefont, name, encoding, *_ in page.get_fonts(full=True):
-        stripped = basefont.split("+")[-1]
-        if stripped in fonts_needed and stripped not in font_buffers:
-            _, _, _, buffer = doc.extract_font(xref)
-            font_buffers[stripped] = buffer
+    def span_rect(span):
+        # Same generic type-body envelope as replace_text_with_formatting()
+        # below -- a rect built from full font-metrics bbox can bleed into
+        # the row above/below it (see that function's own comment on this).
+        size = span["size"]
+        origin = span["origin"]
+        return pymupdf.Rect(span["bbox"][0], origin[1] - size * 0.75, span["bbox"][2], origin[1] + size * 0.25)
 
-    missing = fonts_needed - font_buffers.keys()
-    if missing:
-        print(f"couldn't find font(s) {missing} on {pdf_path} -- leaving agenda unchanged")
-        doc.close()
-        return
+    # The rows below are moved by stamping the matching region of an
+    # untouched copy of this page back on, shifted up -- NOT by re-typing
+    # their text with insert_text(). The template's fonts are subsetted
+    # CFF programs with no unicode cmap, so re-inserting text with them
+    # renders every character as a .notdef box. Reusing the original
+    # content keeps the exact glyphs/fonts/colors.
+    pristine = pymupdf.open("pdf", doc.tobytes())
 
     for row in [target_row] + rows_below:
         for span in row["spans"]:
-            size = span["size"]
-            bbox = span["bbox"]
-            origin = span["origin"]
-            # Same generic type-body envelope as replace_text_with_formatting()
-            # below -- a redact rect built from full font-metrics bbox can
-            # bleed into the row above/below it (see that function's own
-            # comment on this).
-            ascent = size * 0.75
-            descent = size * 0.25
-            redact_rect = pymupdf.Rect(bbox[0], origin[1] - ascent, bbox[2], origin[1] + descent)
-            page.add_redact_annot(redact_rect)
+            page.add_redact_annot(span_rect(span))
 
     page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
 
-    for fontname, buffer in font_buffers.items():
-        page.insert_font(fontname=fontname, fontbuffer=buffer)
+    if rows_below:
+        clip = pymupdf.Rect()
+        for row in rows_below:
+            for span in row["spans"]:
+                clip |= span_rect(span)
+        page.show_pdf_page(clip - (0, shift, 0, shift), pristine, 0, clip=clip)
 
-    for row in rows_below:
-        for span in row["spans"]:
-            new_origin = (span["origin"][0], span["origin"][1] - shift)
-            page.insert_text(
-                new_origin,
-                span["text"],
-                fontname=span["font"],
-                fontsize=span["size"],
-                color=int_to_rgb(span["color"]),
-            )
+    pristine.close()
 
     doc.save(pdf_path, incremental=True, encryption=pymupdf.PDF_ENCRYPT_KEEP)
     doc.close()
