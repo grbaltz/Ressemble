@@ -1,4 +1,5 @@
 import pymupdf
+import shutil
 from pathlib import Path
 from src.paths import BASE_DATA_PATH
 
@@ -35,12 +36,20 @@ class PDFReader:
     #     print(f"Successfully split {doc.name} into {len(doc)} pages.")
     #     doc.close()
             
-    def split_pages(self, log=None):
+    def split_pages(self, log=None, output_dir=None):
         doc = pymupdf.open(self.pdf_path)
         base_name = Path(doc.name).stem
 
-        # Create a unique output directory named after the source file
-        output_dir = self.import_path / base_name
+        if output_dir is None:
+            # Create a unique output directory named after the source file
+            output_dir = self.import_path / base_name
+        else:
+            # A caller-chosen folder is reused across runs, so start it
+            # empty -- leftover pages from a previous, longer source would
+            # otherwise be picked up as part of this one.
+            output_dir = Path(output_dir)
+            if output_dir.exists():
+                shutil.rmtree(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
         total = len(doc)

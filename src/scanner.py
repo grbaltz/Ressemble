@@ -7,7 +7,7 @@ from collections import Counter
 from pathlib import Path
 from src.pdf_reader import PDFReader
 from src.office_import import prepare_emx_source
-from src.paths import PAGES_CONFIG_PATH, TEMPLATE_CONFIG_PATH, BASE_DATA_PATH
+from src.paths import PAGES_CONFIG_PATH, TEMPLATE_CONFIG_PATH, BASE_DATA_PATH, EMX_PAGES_PATH, BLACKDIAMOND_PAGES_PATH
 from rapidfuzz import fuzz
 
 MINIMUM_MATCH_SCORE = 95
@@ -263,9 +263,9 @@ def request_source_files(log, emx_pdf, blackdiamond_pdf):
 
     return {
         "emx_pdf": emx_pdf or None,
-        "emx_dir": str(BASE_DATA_PATH / Path(emx_pdf).stem) if emx_pdf else None,
+        "emx_dir": str(EMX_PAGES_PATH) if emx_pdf else None,
         "blackdiamond_pdf": blackdiamond_pdf or None,
-        "blackdiamond_dir": str(BASE_DATA_PATH / Path(blackdiamond_pdf).stem) if blackdiamond_pdf else None,
+        "blackdiamond_dir": str(BLACKDIAMOND_PAGES_PATH) if blackdiamond_pdf else None,
     }
     
 def detect_slot(stabilized):
@@ -649,7 +649,7 @@ def get_emx_order(log=None, progress=None):
         return
 
     doc = PDFReader(template["sources"]["emx_pdf"])
-    split_dir = doc.split_pages(log=log)
+    split_dir = doc.split_pages(log=log, output_dir=template["sources"]["emx_dir"])
 
     pages = sorted(split_dir.glob("*.pdf"), key=lambda x: numeric_key(x.name))
     total = len(pages)
@@ -671,7 +671,7 @@ def get_bd_order(log=None, progress=None):
         return
 
     doc = PDFReader(template["sources"]["blackdiamond_pdf"])
-    split_dir = doc.split_pages(log=log)
+    split_dir = doc.split_pages(log=log, output_dir=template["sources"]["blackdiamond_dir"])
 
     bd1_dir = split_dir / "bd1"
     bd2_dir = split_dir / "bd2"

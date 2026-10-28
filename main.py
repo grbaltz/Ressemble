@@ -1,3 +1,4 @@
+import multiprocessing
 import sys
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
@@ -17,4 +18,8 @@ def main():
     sys.exit(app.exec())
 
 if __name__ == "__main__":
+    # Report assembly runs in a child process (see AssembleWorker); in a
+    # PyInstaller build that child re-launches this executable, and
+    # freeze_support() is what routes it to the worker instead of the GUI.
+    multiprocessing.freeze_support()
     main()

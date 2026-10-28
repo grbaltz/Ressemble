@@ -7,6 +7,7 @@ import json
 import re
 import sys
 import tempfile
+import traceback
 import pymupdf
 from datetime import date, timedelta
 from src.paths import (
@@ -104,7 +105,7 @@ def assemble_report(log, progress, advisors_filename, client_name, enrolled, tar
     # Set by whichever portfolio-title slot was just processed, consumed
     # by the very next "bd" placeholder -- see the case "bd" handler
     # below for why a raw incrementing slot counter isn't enough here.
-    bd_pending_dir = None
+    bd_pending_dirs = []
     view360_slot = 1
 
     # assemble array of files in order, then combine them
@@ -212,28 +213,32 @@ def assemble_report(log, progress, advisors_filename, client_name, enrolled, tar
                 # account -- a single account uses the generic title page
                 # instead (portfolioGeneric case below). Each pairs with
                 # its own bd-folder (bd1 for the combined view, bd2 for
-                # individual accounts) via bd_pending_dir -- see the
+                # individual accounts) via bd_pending_dirs -- see the
                 # comment on case "bd" below for why that pairing has to
                 # happen here rather than by position.
                 if bd_account_count == 1:
                     print(f"skipping {page['slot']} title page (single account)")
-                    bd_pending_dir = None
+                    bd_pending_dirs = []
                 else:
                     report_pages.append(page["filename"])
                     bd_folder = "bd1" if page["slot"] == "portfolioAllAccounts" else "bd2"
-                    bd_pending_dir = Path(blackdiamond_dir) / bd_folder
+                    bd_pending_dirs = [Path(blackdiamond_dir) / bd_folder]
             case "portfolioGeneric":
                 print("portfolioGeneric slot")
 
-                # The single-account alternative to portfolioIndividualAccount
-                # above -- same bd2 pages, just introduced with wording that
-                # doesn't imply multiple accounts.
+                # The single-account alternative to the two titles above.
+                # With both of those skipped, this is the only title left
+                # in the section, so it carries the overview (bd1) pages as
+                # well as the account (bd2) page -- in the same order the
+                # multi-account layout shows them. Pairing it with bd2
+                # alone used to drop every overview page from
+                # single-account reports.
                 if bd_account_count == 1:
                     report_pages.append(page["filename"])
-                    bd_pending_dir = Path(blackdiamond_dir) / "bd2"
+                    bd_pending_dirs = [Path(blackdiamond_dir) / "bd1", Path(blackdiamond_dir) / "bd2"]
                 else:
                     print("skipping portfolioGeneric title page (multiple accounts)")
-                    bd_pending_dir = None
+                    bd_pending_dirs = []
             case "advisors":
                 print("Advisors slot")
 
@@ -271,65 +276,19 @@ def assemble_report(log, progress, advisors_filename, client_name, enrolled, tar
                 # placeholder page, reused, since only one of that pair is
                 # ever shown). Whichever of those title cases ran just
                 # before this one decided whether it belongs in the
-                # report at all, and which bd-folder it pairs with, via
-                # bd_pending_dir -- so a skipped title's own placeholder
+                # report at all, and which bd-folders it pairs with, via
+                # bd_pending_dirs -- so a skipped title's own placeholder
                 # correctly contributes nothing here, instead of falling
                 # back to inserting the wrong (or a nonexistent) folder.
-                pages = bd_pending_dir
-                bd_pending_dir = None
+                pending_dirs = bd_pending_dirs
+                bd_pending_dirs = []
 
-                if pages is None:
+                if not pending_dirs:
                     print("skipping bd placeholder (preceding title page was omitted)")
                     continue
 
-                print(f"pages: {pages}")
-                sorted_pages = sorted_pdfs(pages)
-
-                if pages.name == "bd2":
-                    # One tear sheet per distinct model, inserted right
-                    # before that model's first account page here -- not
-                    # one per account. Accounts are sorted by portfolio
-                    # value (see get_bd_order() in scanner.py), not by
-                    # model, so a repeat of the same model is rarely
-                    # adjacent to its first occurrence; it still only
-                    # gets a tear sheet that first time, however many
-                    # accounts later the repeat turns up.
-                    #
-                    # Accounts with no tear sheet (no model found, or a
-                    # model like 70/30 with no tear sheet file) all go
-                    # first, so they aren't wedged in among the tear-sheet
-                    # pie charts; each group keeps the sorted order.
-                    tear_sheets = {}
-                    without_sheet, with_sheet = [], []
-                    for p in sorted_pages:
-                        model = extract_account_model(p)
-
-                        if not model:
-                            print(f"no model found on {p}")
-                        elif model not in tear_sheets:
-                            tear_sheets[model] = find_tear_sheet_for_model(model)
-
-                        if model and tear_sheets[model]:
-                            with_sheet.append((p, model))
-                        else:
-                            without_sheet.append(p)
-
-                    for p in without_sheet:
-                        print(f"page {str(p)}")
-                        report_pages.append(str(p))
-
-                    seen_models = set()
-                    for p, model in with_sheet:
-                        if model not in seen_models:
-                            seen_models.add(model)
-                            report_pages.append(str(tear_sheets[model]))
-
-                        print(f"page {str(p)}")
-                        report_pages.append(str(p))
-                else:
-                    for p in sorted_pages:
-                        print(f"page {str(p)}")
-                        report_pages.append(str(p))
+                for pages in pending_dirs:
+                    report_pages.extend(bd_folder_pages(pages))
             case "view360":
                 print("View360 slot")
 
@@ -351,14 +310,115 @@ def assemble_report(log, progress, advisors_filename, client_name, enrolled, tar
 
     print(f"Report pages: {report_pages}")
     try:
+        log(f"Merging {len(report_pages)} pages into the final report…")
         report_path = merge_pdfs(report_pages, f"{EXPORT_PATH}/report_{date.today()}.pdf")
         if include_page_numbers:
+            log("Adding page numbers…")
             add_page_numbers(report_path, skip_pages=1)
+        log(f"Saved report to {report_path}")
     finally:
         for temp_file in temp_files:
             Path(temp_file).unlink(missing_ok=True)
     print(f"report_page: {report_path}")
     return report_path
+
+
+class _QueueWriter:
+    """File-like stand-in for stdout/stderr in the assembly subprocess, so
+    this module's print() diagnostics land in the GUI's Details log too."""
+
+    def __init__(self, queue):
+        self._queue = queue
+        self._buffer = ""
+
+    def write(self, text):
+        self._buffer += text
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            self._queue.put(("log", line))
+        return len(text)
+
+    def flush(self):
+        if self._buffer:
+            self._queue.put(("log", self._buffer))
+            self._buffer = ""
+
+
+def assemble_report_in_subprocess(queue, kwargs):
+    """Entry point for running assemble_report() in its own process.
+
+    PyMuPDF holds the GIL through long calls like the final merge/save, so
+    run on a thread it froze the whole GUI (stuck at "page N of N", Details
+    unclickable) and couldn't be interrupted. A separate process keeps the
+    GUI responsive and can be terminated. Everything is reported back over
+    `queue` as ("log", text), ("progress", current, total), then exactly
+    one of ("done", report_path) or ("error", traceback_text).
+    """
+    sys.stdout = sys.stderr = _QueueWriter(queue)
+    try:
+        report_path = assemble_report(
+            log=lambda message: queue.put(("log", message)),
+            progress=lambda current, total: queue.put(("progress", current, total)),
+            **kwargs,
+        )
+        sys.stdout.flush()
+        queue.put(("done", report_path))
+    except Exception:
+        sys.stdout.flush()
+        queue.put(("error", traceback.format_exc()))
+
+def bd_folder_pages(pages):
+    """The report pages for one Black Diamond folder -- bd1 (overview)
+    pages as-is, or bd2 (per-account) pages with their tear sheets."""
+    print(f"pages: {pages}")
+    sorted_pages = sorted_pdfs(pages)
+    result = []
+
+    if pages.name != "bd2":
+        for p in sorted_pages:
+            print(f"page {str(p)}")
+            result.append(str(p))
+        return result
+
+    # One tear sheet per distinct model, inserted right before that
+    # model's first account page here -- not one per account. Accounts are
+    # sorted by portfolio value (see get_bd_order() in scanner.py), not by
+    # model, so a repeat of the same model is rarely adjacent to its first
+    # occurrence; it still only gets a tear sheet that first time, however
+    # many accounts later the repeat turns up.
+    #
+    # Accounts with no tear sheet (no model found, or a model like 70/30
+    # with no tear sheet file) all go first, so they aren't wedged in
+    # among the tear-sheet pie charts; each group keeps the sorted order.
+    tear_sheets = {}
+    without_sheet, with_sheet = [], []
+    for p in sorted_pages:
+        model = extract_account_model(p)
+
+        if not model:
+            print(f"no model found on {p}")
+        elif model not in tear_sheets:
+            tear_sheets[model] = find_tear_sheet_for_model(model)
+
+        if model and tear_sheets[model]:
+            with_sheet.append((p, model))
+        else:
+            without_sheet.append(p)
+
+    for p in without_sheet:
+        print(f"page {str(p)}")
+        result.append(str(p))
+
+    seen_models = set()
+    for p, model in with_sheet:
+        if model not in seen_models:
+            seen_models.add(model)
+            result.append(str(tear_sheets[model]))
+
+        print(f"page {str(p)}")
+        result.append(str(p))
+
+    return result
 
 def add_page_numbers(pdf_path, skip_pages=1):
     doc = pymupdf.open(pdf_path)
