@@ -33,7 +33,9 @@ class CollapsibleSection(QWidget):
         self.set_collapsed(collapsed)
 
     def toggle(self):
-        self.set_collapsed(self.content.isVisible())
+        # isHidden(), not isVisible() -- the latter is also False whenever
+        # an ancestor is hidden, which would make the toggle misfire.
+        self.set_collapsed(not self.content.isHidden())
 
     def set_collapsed(self, collapsed):
         self.content.setVisible(not collapsed)

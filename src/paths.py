@@ -52,6 +52,14 @@ ICON_PATH = BUNDLE_ROOT / "icon.webp"
 PAGES_CONFIG_PATH = DATA_ROOT / "pages.json"
 TEMPLATE_CONFIG_PATH = DATA_ROOT / "template.json"
 BASE_DATA_PATH = DATA_ROOT / "import" / "split_pages"
+# The EMX and Black Diamond sources each split into a fixed folder of their
+# own, rather than one named after the source file under BASE_DATA_PATH --
+# two sources sharing a filename (e.g. Smith.docx for EMX, Smith.pdf for
+# BD) used to land in the same folder, where sorting the BD pages swept
+# the EMX ones in with them and the EMX section came out empty.
+SOURCE_PAGES_PATH = DATA_ROOT / "import" / "source_pages"
+EMX_PAGES_PATH = SOURCE_PAGES_PATH / "emx"
+BLACKDIAMOND_PAGES_PATH = SOURCE_PAGES_PATH / "blackdiamond"
 ADVISORS_PATH = DATA_ROOT / "import" / "advisors"
 TEAR_SHEETS_PATH = DATA_ROOT / "import" / "tear_sheets"
 EXPORT_PATH = DATA_ROOT / "export"
@@ -61,7 +69,7 @@ def ensure_data_dirs():
     """Creates the writable data tree and seeds empty config files on
     first run. Safe to call every startup -- everything here is a no-op
     once it exists."""
-    for directory in (DATA_ROOT, BASE_DATA_PATH, ADVISORS_PATH, TEAR_SHEETS_PATH, EXPORT_PATH):
+    for directory in (DATA_ROOT, BASE_DATA_PATH, SOURCE_PAGES_PATH, ADVISORS_PATH, TEAR_SHEETS_PATH, EXPORT_PATH):
         directory.mkdir(parents=True, exist_ok=True)
 
     for config_path in (PAGES_CONFIG_PATH, TEMPLATE_CONFIG_PATH):
