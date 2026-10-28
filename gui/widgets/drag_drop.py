@@ -17,38 +17,3 @@ def dropped_file_path(mime_data, extensions):
                 return path
     return None
 
-
-class FileDropTargetMixin:
-    """Mix into a QWidget to let it accept a single file of a given type
-    dragged in from the OS (Finder, Explorer, a file manager) anywhere on
-    the widget, as an alternative to browsing for it.
-
-    Call _enable_file_drop(extensions) once (typically in __init__) and
-    override _handle_dropped_file(path). Left out of WizardScreen itself
-    since not every screen wants to be a drop target, and the ones that do
-    disagree on what a drop should mean.
-    """
-
-    def _enable_file_drop(self, extensions):
-        self._drop_extensions = extensions
-        self.setAcceptDrops(True)
-
-    def dragEnterEvent(self, event):
-        if dropped_file_path(event.mimeData(), self._drop_extensions):
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dragMoveEvent(self, event):
-        if dropped_file_path(event.mimeData(), self._drop_extensions):
-            event.acceptProposedAction()
-        else:
-            event.ignore()
-
-    def dropEvent(self, event):
-        path = dropped_file_path(event.mimeData(), self._drop_extensions)
-        if path:
-            event.acceptProposedAction()
-            self._handle_dropped_file(path)
-        else:
-            event.ignore()

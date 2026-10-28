@@ -23,6 +23,9 @@ datas = [
     # (as seen in Explorer/Finder before the app ever runs) and aren't
     # readable by Qt's QIcon at runtime.
     (str(REPO_ROOT / "icon.webp"), "."),
+    # The in-app stroke icons (see gui/icons.py), also referenced by the
+    # stylesheet for the dropdown arrow.
+    (str(REPO_ROOT / "gui" / "assets" / "icons"), "gui/assets/icons"),
 ]
 binaries = []
 hiddenimports = []

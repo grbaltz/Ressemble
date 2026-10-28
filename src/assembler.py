@@ -6,6 +6,7 @@ import shutil
 import json
 import re
 import sys
+import itertools
 import tempfile
 import traceback
 import pymupdf
@@ -188,7 +189,7 @@ def assemble_report(log, progress, advisors_filename, client_name, enrolled, tar
 
                 old_text = "The ### Household"
                 new_text = "The " + client_name + " Household"
-                replace_text_with_formatting(cover_page, old_text, new_text, AVENIR_BLACK_FONT_FILE)
+                replace_cover_name(cover_page, old_text, new_text, AVENIR_BLACK_FONT_FILE)
 
                 date_text = format_report_date(target_date or next_monday())
                 replace_text_with_formatting(cover_page, "Date, Year", date_text, TIMES_NEW_ROMAN_FONT_FILE)
@@ -420,6 +421,26 @@ def bd_folder_pages(pages):
 
     return result
 
+# Marks content as a footer in the PDF sense: page furniture, not part of
+# the document's own text. This is the standard (ISO 32000) way to flag
+# running footers, which is what Acrobat itself does for the ones it adds.
+# It does not hook the numbers up to Acrobat's Header & Footer dialog --
+# that keeps its own settings in an undocumented Adobe-only structure no
+# open library can write -- but it does tell readers and printers what
+# they are, and screen readers skip them.
+FOOTER_MARKER_START = b"/Artifact <</Type /Pagination /Subtype /Footer /Attached [/Bottom]>> BDC\n"
+FOOTER_MARKER_END = b"\nEMC\n"
+
+
+def mark_as_footer(doc, page, existing_content_xrefs):
+    """Wraps whatever content `page` gained since `existing_content_xrefs`
+    was taken (the page number just inserted) in a footer artifact."""
+    for xref in page.get_contents():
+        if xref in existing_content_xrefs:
+            continue
+        doc.update_stream(xref, FOOTER_MARKER_START + doc.xref_stream(xref) + FOOTER_MARKER_END)
+
+
 def add_page_numbers(pdf_path, skip_pages=1):
     doc = pymupdf.open(pdf_path)
 
@@ -439,7 +460,9 @@ def add_page_numbers(pdf_path, skip_pages=1):
         x = page.rect.width - PAGE_NUMBER_MARGIN_X - text_width
         y = page.rect.height - PAGE_NUMBER_MARGIN_Y
 
+        existing = set(page.get_contents())
         page.insert_text((x, y), label, fontname=fontname, fontsize=PAGE_NUMBER_SIZE, color=color)
+        mark_as_footer(doc, page, existing)
 
     doc.save(pdf_path, incremental=True, encryption=pymupdf.PDF_ENCRYPT_KEEP)
     doc.close()
@@ -600,6 +623,161 @@ def remove_agenda_plan360_line(pdf_path):
         page.show_pdf_page(clip - (0, shift, 0, shift), pristine, 0, clip=clip)
 
     pristine.close()
+
+    doc.save(pdf_path, incremental=True, encryption=pymupdf.PDF_ENCRYPT_KEEP)
+    doc.close()
+
+
+# The household name on the cover is set in one line of large type. A long
+# name (two surnames, a hyphenated one) runs off the page, so it wraps onto
+# up to this many lines at the template's own size, with the "Annual Review"
+# line pushed down to make room. Only a name that still doesn't fit gets
+# smaller, never below the minimum.
+COVER_TEXT_MARGIN = 36  # the template's own left margin, mirrored on the right
+COVER_NAME_MAX_LINES = 3
+COVER_NAME_MIN_SIZE = 28
+COVER_NAME_LEADING = 1.1
+COVER_SUBTITLE_TEXT = "Annual Review"
+
+
+def _best_split(words, measure, line_count):
+    """The (widest line, lines) split of `words` into `line_count` lines
+    that makes the widest line as narrow as possible -- balanced lines
+    rather than a long one followed by a lone word."""
+    best = None
+    for cuts in itertools.combinations(range(1, len(words)), line_count - 1):
+        bounds = (0, *cuts, len(words))
+        lines = [" ".join(words[a:b]) for a, b in zip(bounds, bounds[1:])]
+        widest = max(measure(line) for line in lines)
+        if best is None or widest < best[0]:
+            best = (widest, lines)
+    return best
+
+
+def layout_cover_name(text, measure_at_size, size, max_width, max_lines=COVER_NAME_MAX_LINES, min_size=COVER_NAME_MIN_SIZE):
+    """Lays `text` out in as few lines as fit within `max_width`, shrinking
+    the type only once the maximum number of lines isn't enough. Returns
+    (lines, size). `measure_at_size(size)` gives a text -> width function."""
+    words = text.split()
+    max_lines = max(1, min(max_lines, len(words)))
+
+    while True:
+        measure = measure_at_size(size)
+        for line_count in range(1, max_lines + 1):
+            widest, lines = _best_split(words, measure, line_count)
+            if widest <= max_width:
+                return lines, size
+
+        if size <= min_size:
+            # Won't fit even at the smallest size: the most balanced
+            # split at the maximum line count is the best that's left.
+            return _best_split(words, measure, max_lines)[1], size
+        size = max(min_size, size - 1)
+
+
+def _find_span(page, text):
+    for block in page.get_text("dict")["blocks"]:
+        for line in block.get("lines", []):
+            for span in line["spans"]:
+                if text in span["text"]:
+                    return span
+    return None
+
+
+def _embedded_font_buffer(doc, page, span_font):
+    """The font file embedded in `page` for a span's font, or None. A span
+    reports a truncated name ("AGaramondPro-SemiboldIta") for a font the
+    page lists in full, behind a subset prefix ("ATCRIH+...Italic")."""
+    for font in page.get_fonts(full=True):
+        name = font[3].split("+")[-1]
+        if name.startswith(span_font) or span_font.startswith(name):
+            try:
+                return doc.extract_font(font[0])[3]
+            except Exception:
+                return None
+    return None
+
+
+def replace_cover_name(pdf_path, search_text, name_text, font_file):
+    """Puts `name_text` where the cover's household-name placeholder is. A
+    name that fits stays on one line exactly as before; a longer one wraps,
+    and the "Annual Review" line below moves down by the extra height."""
+    doc = pymupdf.open(pdf_path)
+    page = doc[0]
+
+    span = _find_span(page, search_text)
+    font = pymupdf.Font(fontfile=font_file)
+    max_width = page.rect.width - 2 * COVER_TEXT_MARGIN
+
+    if span is None:
+        doc.close()
+        replace_text_with_formatting(pdf_path, search_text, name_text, font_file)
+        return
+
+    lines, size = layout_cover_name(
+        name_text,
+        lambda point_size: (lambda text: font.text_length(text, fontsize=point_size)),
+        span["size"],
+        max_width,
+    )
+
+    subtitle = _find_span(page, COVER_SUBTITLE_TEXT)
+    subtitle_font = _embedded_font_buffer(doc, page, subtitle["font"]) if subtitle else None
+    doc.close()
+
+    if len(lines) == 1 and size == span["size"]:
+        replace_text_with_formatting(pdf_path, search_text, name_text, font_file)
+        return
+
+    if len(lines) > 1 and subtitle_font is None:
+        # Nowhere to move "Annual Review" to without its font: keep it on one
+        # line, shrunk to fit, rather than letting the name run into it.
+        lines, size = layout_cover_name(
+            name_text,
+            lambda point_size: (lambda text: font.text_length(text, fontsize=point_size)),
+            span["size"],
+            max_width,
+            max_lines=1,
+        )
+
+    doc = pymupdf.open(pdf_path)
+    page = doc[0]
+    leading = size * COVER_NAME_LEADING
+    shift = (len(lines) - 1) * leading
+
+    def envelope(sp):
+        # Same generic type-body envelope as replace_text_with_formatting():
+        # the span's own bbox can bleed into neighboring lines.
+        origin, sp_size, bbox = sp["origin"], sp["size"], sp["bbox"]
+        return pymupdf.Rect(bbox[0], origin[1] - sp_size * 0.75, bbox[2], origin[1] + sp_size * 0.25)
+
+    page.add_redact_annot(envelope(span))
+    if shift and subtitle:
+        page.add_redact_annot(envelope(subtitle))
+    page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
+
+    fontname = Path(font_file).stem.replace(" ", "-")
+    page.insert_font(fontname=fontname, fontfile=font_file)
+    origin = span["origin"]
+    for index, line in enumerate(lines):
+        page.insert_text(
+            (origin[0], origin[1] + index * leading),
+            line,
+            fontname=fontname,
+            fontsize=size,
+            color=int_to_rgb(span["color"]),
+        )
+
+    if shift and subtitle:
+        subtitle_name = "CoverSubtitle"
+        page.insert_font(fontname=subtitle_name, fontbuffer=subtitle_font)
+        page.insert_text(
+            (subtitle["origin"][0], subtitle["origin"][1] + shift),
+            subtitle["text"],
+            fontname=subtitle_name,
+            fontsize=subtitle["size"],
+            color=int_to_rgb(subtitle["color"]),
+        )
 
     doc.save(pdf_path, incremental=True, encryption=pymupdf.PDF_ENCRYPT_KEEP)
     doc.close()
