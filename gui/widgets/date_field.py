@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QPushButton, QLabel, QHBoxLayout, QCalendarWidget
-from PySide6.QtCore import Qt, QDate, QPoint, Signal
+from PySide6.QtCore import Qt, QDate, QPoint, QTimer, Signal
 from gui.icons import icon_label
 from gui.theme import MUTED_TEXT
 
@@ -20,7 +20,15 @@ class DateField(QPushButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._date = QDate.currentDate()
-        self._popup = None
+
+        # One calendar for the field's whole life, owned by the field and
+        # only ever shown and hidden. Creating and deleting it per pick
+        # destroyed it from inside its own `clicked` signal, which crashes
+        # on macOS.
+        self._popup = QCalendarWidget(self)
+        self._popup.setWindowFlags(Qt.WindowType.Popup)
+        self._popup.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        self._popup.clicked.connect(self._on_picked)
 
         # The label and icon sit on top of the button, so they must not
         # swallow clicks meant for it.
@@ -54,18 +62,11 @@ class DateField(QPushButton):
         self._text.setText(self._date.toString(self.DISPLAY_FORMAT))
 
     def _open_calendar(self):
-        popup = QCalendarWidget()
-        popup.setWindowFlags(Qt.WindowType.Popup)
-        popup.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        popup.setSelectedDate(self._date)
-        popup.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
-        popup.clicked.connect(self._on_picked)
-        popup.move(self.mapToGlobal(QPoint(0, self.height() + 2)))
-        self._popup = popup
-        popup.show()
+        self._popup.setSelectedDate(self._date)
+        self._popup.move(self.mapToGlobal(QPoint(0, self.height() + 2)))
+        self._popup.show()
 
     def _on_picked(self, date):
         self.setDate(date)
-        if self._popup is not None:
-            self._popup.close()
-            self._popup = None
+        # After the signal has returned, not during it.
+        QTimer.singleShot(0, self._popup.hide)
