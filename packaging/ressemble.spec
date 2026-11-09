@@ -32,10 +32,21 @@ hiddenimports = []
 
 # PySide6 and pymupdf both ship platform-specific binaries/plugins/data
 # that PyInstaller's default import analysis won't find on its own.
+def _inside_nested_app(entry):
+    # PySide6's macOS wheels ship Qt's developer tools (Assistant, Designer,
+    # Linguist) as whole nested .app bundles. Ressemble uses none of them,
+    # and one has a self-referencing symlink once PyInstaller repackages it,
+    # which makes the CI re-sign fail with "Too many levels of symbolic
+    # links" (In subcomponent: .../Assistant__dot__app/Contents/MacOS/Assistant).
+    # PyInstaller later renames "X.app" to "X__dot__app"; either spelling
+    # can show up in the list at this stage.
+    return any(part.endswith((".app", "__dot__app")) for part in Path(entry[1]).parts)
+
+
 for pkg in ("PySide6", "pymupdf", "rapidfuzz"):
     pkg_datas, pkg_binaries, pkg_hiddenimports = collect_all(pkg)
-    datas += pkg_datas
-    binaries += pkg_binaries
+    datas += [entry for entry in pkg_datas if not _inside_nested_app(entry)]
+    binaries += [entry for entry in pkg_binaries if not _inside_nested_app(entry)]
     hiddenimports += pkg_hiddenimports
 
 # PyInstaller's Analysis has been observed to miss some stdlib C
