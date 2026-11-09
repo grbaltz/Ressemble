@@ -5,6 +5,7 @@ from src.advisors import (
     load_cached_advisors,
     load_cached_advisor_combos,
     advisor_combo_file,
+    order_distance,
     load_advisor_roles,
     ROLE_ADVISOR,
     ROLE_SERVICE,
@@ -33,11 +34,11 @@ class TeamPicker(QWidget):
     matching team, or blanks the shortcut if none matches. Nothing here
     stops an unmatched combination -- the warning only informs.
 
-    Four independent role slots rather than a multi-select list because
-    picking a team is really "who's in each of these roles", and the combo
-    file is just whichever set of names that produces (advisor_combo_file()
-    dedupes and sorts before matching, so which slot a name lands in
-    doesn't matter to the lookup).
+    The order of a team matters -- "Dan, Christie, Sally" and "Christie,
+    Dan, Sally" are different pages, so each is its own entry in the Team
+    page list. The role dropdowns are read in slot order (Advisor 1, 2, 3,
+    then Service), and that order picks the page: the one laid out exactly
+    that way, or failing that the closest (see _sync_quick_select()).
     """
 
     changed = Signal()
@@ -134,8 +135,18 @@ class TeamPicker(QWidget):
         in advisor_combo_file(), not here."""
         return [combo.currentData() or "" for combo in self.advisor_combos]
 
-    def selected_advisors(self):
+    def _dropdown_names(self):
+        """The people in the role dropdowns, in slot order."""
         return [name for name in self.role_values() if name]
+
+    def selected_advisors(self):
+        """The team in page order: the order of the Team page entry the
+        dropdowns currently match (which may differ from slot order, e.g.
+        when the Service person is listed in the middle), else slot order."""
+        data = self.quick_select_combo.currentData()
+        if data:
+            return list(data[0])
+        return self._dropdown_names()
 
     def has_unmatched_combination(self):
         selected = self.selected_advisors()
@@ -179,7 +190,7 @@ class TeamPicker(QWidget):
         self.quick_select_combo.clear()
         self.quick_select_combo.addItem("Choose a team page", None)
         for combo_names, slots in assignments:
-            self.quick_select_combo.addItem(", ".join(combo_names), slots)
+            self.quick_select_combo.addItem(", ".join(combo_names), (combo_names, slots))
         self.quick_select_combo.setCurrentIndex(0)
         self.quick_select_combo.blockSignals(False)
         self._sync_quick_select()
@@ -218,9 +229,10 @@ class TeamPicker(QWidget):
     # --- reacting to changes ---
 
     def _on_quick_select_changed(self):
-        slots = self.quick_select_combo.currentData()
+        data = self.quick_select_combo.currentData()
 
-        if slots:
+        if data:
+            _, slots = data
             for role_combo, name in zip(self.advisor_combos, slots):
                 role_combo.blockSignals(True)
                 index = role_combo.findData(name) if name else 0
@@ -236,18 +248,31 @@ class TeamPicker(QWidget):
         self.changed.emit()
 
     def _sync_quick_select(self):
-        """Points the Team page dropdown at the team the role dropdowns
-        currently add up to -- compared as a set of names, since a
-        hand-built team may sit in different slots than _slot_assignment()
-        would put it -- or at the blank entry if no listed team matches."""
-        selected = set(self.selected_advisors())
+        """Points the Team page dropdown at the page the role dropdowns
+        currently add up to, or at the blank entry if no listed page has
+        those people.
+
+        Several pages can have the same people in a different order, so
+        the choice is by order: a page whose slots match the dropdowns
+        exactly wins (and the current one, if it does), else the page
+        closest in order to the dropdowns' slot order, again keeping the
+        current page on a tie."""
+        names = self._dropdown_names()
+        values = self.role_values()
+        current = self.quick_select_combo.currentIndex()
+
+        candidates = []
+        for i in range(1, self.quick_select_combo.count()):
+            page_names, slots = self.quick_select_combo.itemData(i)
+            if set(page_names) == set(names):
+                candidates.append((i, page_names, slots))
+
         index = 0
-        if selected:
-            for i in range(1, self.quick_select_combo.count()):
-                slots = self.quick_select_combo.itemData(i)
-                if {name for name in slots if name} == selected:
-                    index = i
-                    break
+        if candidates:
+            def rank(candidate):
+                i, page_names, slots = candidate
+                return (slots != values, order_distance(names, page_names), i != current, i)
+            index = min(candidates, key=rank)[0]
 
         self.quick_select_combo.blockSignals(True)
         self.quick_select_combo.setCurrentIndex(index)

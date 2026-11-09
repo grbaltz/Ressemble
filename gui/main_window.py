@@ -4,6 +4,7 @@ from gui.screens.builder_screen import BuilderScreen
 from gui.screens.library_screen import LibraryScreen
 from gui.widgets.app_header import AppHeader
 from gui.widgets.fit import CurrentStack
+from src.advisors import refresh_outdated_split
 
 SCREEN_BUILDER = 0
 SCREEN_LIBRARY = 1
@@ -34,6 +35,13 @@ class MainWindow(QMainWindow):
         # the Library whenever the template finishes scanning.
         self.pdf_path = ""
         self.matched_pages = None
+
+        # Team pages split by an older version lost the order of the names;
+        # rebuild them from the same file before anything reads them.
+        try:
+            refresh_outdated_split()
+        except Exception as exc:
+            print(f"couldn't rebuild the team pages: {exc}")
 
         self.header = AppHeader()
         self.builder_screen = BuilderScreen(self, self.settings)

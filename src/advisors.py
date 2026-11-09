@@ -10,12 +10,18 @@ Each page of the source PDF is one specific pre-designed team combination
 than one page per individual advisor -- confirmed against the actual file
 this was built against (src/import/Team Pages_04_2026.pdf): every page
 carries 2-5 names, never exactly one. So the split keeps each page whole
-and names it after everyone who appears on it (alphabetically, matching
-the old combo files' naming), rather than trying to carve individual
-people out of a shared page.
+and names it after everyone who appears on it, rather than trying to carve
+individual people out of a shared page.
+
+The order of the names matters: the file can hold "Dan, Christie, Sally"
+and "Christie, Dan, Sally" as two different pages. Names are therefore kept
+in the order they're laid out on the page (left to right, top to bottom --
+the PDF's own content order isn't reliable for that) and the combo file
+name follows the same order.
 """
 import json
 import re
+from pathlib import Path
 import pymupdf
 from src.paths import ADVISORS_PATH, TEMPLATE_CONFIG_PATH
 
@@ -54,8 +60,18 @@ def _clean_name(raw_text):
     return name or None
 
 
-def _bold_text_by_size(page):
-    """{rounded font size -> [bold text on the page at that size]}."""
+# Bumped whenever how pages are split or named changes, so a library split
+# by an older version gets rebuilt (see refresh_outdated_split()).
+SPLIT_LAYOUT_VERSION = 2
+
+# Names whose tops are within this many points of each other sit on the same
+# visual row (the real pages' rows are ~180 apart; names on one row differ by
+# a few points at most).
+_SAME_ROW_TOLERANCE = 30
+
+
+def _bold_spans_by_size(page):
+    """{rounded font size -> [(bold text, x, y) on the page at that size]}."""
     sizes = {}
     for block in page.get_text("dict")["blocks"]:
         if block["type"] != 0:
@@ -65,12 +81,26 @@ def _bold_text_by_size(page):
                 text = span["text"].strip()
                 if not text or not (span["flags"] & pymupdf.TEXT_FONT_BOLD):
                     continue
-                sizes.setdefault(round(span["size"], 1), []).append(text)
+                x0, y0 = span["bbox"][:2]
+                sizes.setdefault(round(span["size"], 1), []).append((text, x0, y0))
     return sizes
 
 
+def _reading_order(items):
+    """items are (value, x, y); returns the values top row first, each row
+    left to right -- the way a person reads the page."""
+    rows = []
+    for item in sorted(items, key=lambda item: item[2]):
+        if rows and item[2] - rows[-1][0][2] <= _SAME_ROW_TOLERANCE:
+            rows[-1].append(item)
+        else:
+            rows.append([item])
+    return [item[0] for row in rows for item in sorted(row, key=lambda item: item[1])]
+
+
 def _names_on_page(page):
-    by_size = _bold_text_by_size(page)
+    """The people shown on the page, in the order they're laid out on it."""
+    by_size = _bold_spans_by_size(page)
     if not by_size:
         return []
 
@@ -79,23 +109,29 @@ def _names_on_page(page):
     # page with a single bold run) -- better to try it than find nothing.
     name_size = sizes[1] if len(sizes) > 1 else sizes[0]
 
-    names = []
-    for text in by_size[name_size]:
+    found = []
+    for text, x, y in by_size[name_size]:
         name = _clean_name(text)
         if name and _NAME_SHAPE.match(name):
-            names.append(name)
-    return names
+            found.append((name, x, y))
+    return list(dict.fromkeys(_reading_order(found)))
+
+
+def _sorted_combos(combos):
+    """Smallest teams first, then by who's listed first (then second, ...),
+    so the same lead's pages sit together."""
+    return sorted(combos, key=lambda names: (len(names), names))
 
 
 def split_advisors_pdf(pdf_path):
     """Splits pdf_path into one PDF per page under ADVISORS_PATH, replacing
     whatever was there before -- it always reflects only the most recently
     provided advisors file. Each page is saved whole, named after every
-    advisor who appears on it (alphabetically, underscore-joined, matching
-    the naming assemble_report() looks combo files up by). Returns
-    (sorted unique advisor names, per-page combos) -- the combos are each
-    page's own name list, in the same order/casing they appeared on the
-    page, for the Sources & Advisors screen's "quick select" list (see
+    advisor who appears on it (in the order they appear on the page,
+    underscore-joined, matching the naming advisor_combo_file() looks combo
+    files up by). Returns (sorted unique advisor names, per-page combos) --
+    the combos are each page's own name list, in the same order/casing they
+    appeared on the page, for the team picker's "Team page" list (see
     load_cached_advisor_combos()): reusing those exact per-page lists here
     means that list can never drift from what actually has a real page,
     the way reconstructing names from the combo filenames' slugs could if
@@ -110,7 +146,7 @@ def split_advisors_pdf(pdf_path):
     seen_combos = set()
     combos = []
     for page_num in range(len(doc)):
-        names = sorted(set(_names_on_page(doc[page_num])))
+        names = _names_on_page(doc[page_num])
         if not names:
             continue
 
@@ -128,8 +164,7 @@ def split_advisors_pdf(pdf_path):
         combo_page.close()
 
     doc.close()
-    combos.sort(key=lambda names: (len(names), names))
-    return sorted(unique_names), combos
+    return sorted(unique_names), _sorted_combos(combos)
 
 
 def load_cached_advisors():
@@ -154,7 +189,15 @@ def load_cached_advisor_combos():
             template = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return []
-    return template.get("advisor_combos", [])
+    return _sorted_combos(template.get("advisor_combos", []))
+
+
+def _cached_split_layout():
+    try:
+        with open(TEMPLATE_CONFIG_PATH) as f:
+            return json.load(f).get("advisors_layout", 1)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return 1
 
 
 def _save_cached_advisors(source_path, names, combos):
@@ -167,6 +210,7 @@ def _save_cached_advisors(source_path, names, combos):
     template["advisors_source"] = source_path
     template["advisor_names"] = names
     template["advisor_combos"] = combos
+    template["advisors_layout"] = SPLIT_LAYOUT_VERSION
 
     with open(TEMPLATE_CONFIG_PATH, "w") as f:
         json.dump(template, f)
@@ -179,7 +223,7 @@ def ensure_advisors_split(pdf_path):
     of advisor names either way."""
     pdf_path = str(pdf_path)
     cached_source, cached_names = load_cached_advisors()
-    if cached_source == pdf_path and cached_names:
+    if cached_source == pdf_path and cached_names and _cached_split_layout() >= SPLIT_LAYOUT_VERSION:
         return cached_names
 
     names, combos = split_advisors_pdf(pdf_path)
@@ -187,28 +231,68 @@ def ensure_advisors_split(pdf_path):
     return names
 
 
-def advisor_combo_file(selected_names):
-    """The combo file matching an exact set of selected advisor names, or
-    None if this particular combination wasn't one of the pages in the
-    provided advisors PDF -- picking an arbitrary subset of the roster
-    isn't guaranteed to have a matching pre-designed page.
+def refresh_outdated_split():
+    """Re-splits the advisors file if the library was split by an older
+    version of this (before page order was kept) and the file is still
+    where it was. Returns True if it rebuilt anything."""
+    source, names = load_cached_advisors()
+    if not source or not names or _cached_split_layout() >= SPLIT_LAYOUT_VERSION:
+        return False
+    if not Path(source).exists():
+        return False
+    ensure_advisors_split(source)
+    return True
 
-    Deduplicates and drops blanks before matching -- selected_names may
-    come straight from the Advisor 1/2/3/Service dropdowns, which
-    (unlike the old checkbox list) can have the same name picked twice or
-    a slot left unset. Two dropdowns pointing at the same person is just a
-    3-person team with a redundant pick, not automatically "no page for
-    this" -- a literal, un-deduplicated slug would never match any real
-    combo file, since split_advisors_pdf() never names one with a repeated
-    name to begin with.
+
+def _combo_path(names):
+    return ADVISORS_PATH / ("_".join(slugify_advisor_name(name) for name in names) + ".pdf")
+
+
+def order_distance(wanted, actual):
+    """How far apart two orderings of the same people are: the number of
+    pairs that come the other way round, then the number that sit in a
+    different position. (0, 0) means identical."""
+    position = {name: i for i, name in enumerate(actual)}
+    pairs = sum(
+        1
+        for i, first in enumerate(wanted)
+        for second in wanted[i + 1:]
+        if position[first] > position[second]
+    )
+    moved = sum(1 for i, name in enumerate(wanted) if position[name] != i)
+    return pairs, moved
+
+
+def advisor_combo_file(selected_names):
+    """The combo file for these people, in this order, or None if the
+    advisors PDF has no page for them. Order matters: "Dan, Christie,
+    Sally" and "Christie, Dan, Sally" are separate pages.
+
+    selected_names may come straight from the Advisor 1/2/3/Service
+    dropdowns, so blanks are dropped and a name picked twice counts once
+    (a literal slug with a repeated name would never match any file).
+
+    When no page has exactly that order, the page with the same people laid
+    out closest to it is used -- a team picked from the dropdowns can't
+    always reproduce a page's order exactly (the Service slot is always
+    last, say), and the right people on the nearest page is better than a
+    placeholder.
     """
-    names = {name for name in selected_names if name}
+    names = list(dict.fromkeys(name for name in selected_names if name))
     if not names:
         return None
 
-    slug = "_".join(slugify_advisor_name(name) for name in sorted(names))
-    combo_pdf = ADVISORS_PATH / f"{slug}.pdf"
-    return combo_pdf if combo_pdf.exists() else None
+    exact = _combo_path(names)
+    if exact.exists():
+        return exact
+
+    candidates = [
+        combo for combo in load_cached_advisor_combos()
+        if set(combo) == set(names) and _combo_path(combo).exists()
+    ]
+    if not candidates:
+        return None
+    return _combo_path(min(candidates, key=lambda combo: order_distance(names, combo)))
 
 
 # Each team member is classified once, by the user, as either an advisor
